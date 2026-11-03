@@ -259,6 +259,7 @@ private fun SuspendSection(
     val isSuspended = currentMode == RM.Mode.SUSPENDED_BY_USER
 
     val resumeText = stringResource(UiStrings.resume)
+    val duration15mText = stringResource(UiStrings.duration15m)
     val duration1hText = stringResource(UiStrings.duration1h)
     val duration2hText = stringResource(UiStrings.duration2h)
     val duration3hText = stringResource(UiStrings.duration3h)
@@ -277,6 +278,13 @@ private fun SuspendSection(
         }
         if (allowedModes.contains(RM.Mode.SUSPENDED_BY_USER)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                // Boost: a 15 min suspend, as in the 6.1.2 loop dialog. A suspend sets no pump temp of its
+                // own length, so unlike the disconnect row it does not depend on the pump's TBR steps.
+                CompactButton(
+                    duration15mText, RM.Mode.SUSPENDED_BY_USER,
+                    { onAction(PendingRunningModeAction(RM.Mode.SUSPENDED_BY_USER, Action.SUSPEND, 15)) },
+                    Modifier.weight(1f)
+                )
                 CompactButton(
                     duration1hText, RM.Mode.SUSPENDED_BY_USER,
                     { onAction(PendingRunningModeAction(RM.Mode.SUSPENDED_BY_USER, Action.SUSPEND, 60)) },

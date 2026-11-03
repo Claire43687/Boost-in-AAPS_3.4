@@ -1,6 +1,7 @@
 package app.aaps.implementation.maintenance.migration
 
 import app.aaps.core.data.model.ICfg
+import app.aaps.core.data.model.InsulinModel
 import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.insulin.InsulinType
@@ -106,6 +107,116 @@ class InsulinMigrationTest {
         val store = storeOf("ConfigBuilder_Enabled_INSULIN_InsulinOrefFreePeakPlugin" to true)
 
         assertThat(sut().readLegacyInsulin(store)?.peakTime).isEqualTo(75L * 60 * 1000)
+    }
+
+    // ── Boost 3.4 Lyumjev PD plugins ────────────────────────────────────────────────────────────────
+
+    @Test fun `either PD plugin reads as the PD curve`() {
+        for (plugin in listOf("InsulinLyumjevU100PDPlugin", "InsulinLyumjevU200PDPlugin")) {
+            val legacy = sut().readLegacyInsulin(storeOf("ConfigBuilder_Enabled_INSULIN_$plugin" to true))
+            assertThat(legacy.model).isEqualTo(InsulinModel.LYUMJEV_PD)
+            assertThat(legacy.fromExplicitKey).isTrue()
+        }
+    }
+
+    @Test fun `a selected PD plugin wins over an oref running record and fixes the curve values`() {
+        val record = ICfg("Rapid", 36_000_000L, 4_500_000L, 1.0)
+        val legacy = sut().readLegacyInsulin(storeOf("ConfigBuilder_Enabled_INSULIN_InsulinLyumjevU200PDPlugin" to true))
+
+        val plan = sut().plan(record, legacy, ProfileDiaHarvest(mapOf("A" to 10.0), emptyList()), "A")
+
+        assertThat(plan.iCfg.model).isEqualTo(InsulinModel.LYUMJEV_PD)
+        assertThat(plan.iCfg.dia).isEqualTo(8.0)
+        assertThat(plan.iCfg.peak).isEqualTo(45)
+        assertThat(plan.iCfg.concentration).isEqualTo(1.0)
+        assertThat(plan.isGuess).isFalse()
+    }
+
+    @Test fun `PD keys left behind by an earlier 4_0 build change nothing`() {
+        val chosenSince = ICfg("Ultra", 28_800_000L, 3_300_000L, 1.0)
+        val legacy = sut().readLegacyInsulin(storeOf("ConfigBuilder_Enabled_INSULIN_InsulinLyumjevU200PDPlugin" to true))
+
+        val plan = sut().plan(chosenSince, legacy, ProfileDiaHarvest(emptyMap(), emptyList()), "A", upgradingFrom3x = false)
+
+        assertThat(plan.iCfg).isEqualTo(chosenSince)
+        assertThat(plan.runningRecordNeedsSwitch(chosenSince)).isFalse()
+    }
+
+    @Test fun `PD keys with no usable record still give the PD curve, never oref named PD`() {
+        val legacy = sut().readLegacyInsulin(storeOf("ConfigBuilder_Enabled_INSULIN_InsulinLyumjevU200PDPlugin" to true))
+
+        val plan = sut().plan(null, legacy, ProfileDiaHarvest(emptyMap(), emptyList()), null, upgradingFrom3x = false)
+
+        assertThat(plan.iCfg.model).isEqualTo(InsulinModel.LYUMJEV_PD)
+        assertThat(plan.iCfg.dia).isEqualTo(8.0)
+    }
+
+    @Test fun `only an oref running record under a PD plan needs a profile switch`() {
+        val legacy = sut().readLegacyInsulin(storeOf("ConfigBuilder_Enabled_INSULIN_InsulinLyumjevU200PDPlugin" to true))
+        val harvest = ProfileDiaHarvest(emptyMap(), emptyList())
+        val oref = ICfg("Rapid", 36_000_000L, 4_500_000L, 1.0)
+        val pd = ICfg("Lyumjev U200 Glucodynamic", 28_800_000L, 2_700_000L, 1.0, InsulinModel.LYUMJEV_PD)
+
+        assertThat(sut().plan(oref, legacy, harvest, "A").runningRecordNeedsSwitch(oref)).isTrue()
+        assertThat(sut().plan(pd, legacy, harvest, "A").runningRecordNeedsSwitch(pd)).isFalse()
+        assertThat(sut().plan(null, legacy, harvest, "A").runningRecordNeedsSwitch(null)).isFalse()
+        assertThat(sut().plan(oref, sut().readLegacyInsulin(storeOf()), harvest, "A").runningRecordNeedsSwitch(oref)).isFalse()
+    }
+
+    @Test fun `a PD running record keeps its model once the plugin keys are gone`() {
+        val record = ICfg("Lyumjev U200 Glucodynamic", 28_800_000L, 2_700_000L, 1.0, InsulinModel.LYUMJEV_PD)
+
+        val plan = sut().plan(record, sut().readLegacyInsulin(storeOf()), ProfileDiaHarvest(emptyMap(), emptyList()), "A")
+
+        assertThat(plan.source).isEqualTo(InsulinMigrationPlan.Source.RECORD)
+        assertThat(plan.iCfg.model).isEqualTo(InsulinModel.LYUMJEV_PD)
+    }
+
+    // ── importedInsulin: a 3.x settings file ─────────────────────────────────────────────────────────
+
+    @Test fun `a DIA above the limit in force is brought down to it, with a notice`() {
+        val file = storeOf(
+            "ConfigBuilder_Enabled_INSULIN_InsulinOrefFreePeakPlugin" to true,
+            "LocalProfile_name_0" to "A", "LocalProfile_dia_0" to 10.0
+        )
+
+        val imported = sut().importedInsulin(file, "list")!!
+
+        assertThat(imported.catalogue).contains(""""insulinEndTime":32400000""")
+        assertThat(imported.notice).isNotNull()
+    }
+
+    @Test fun `a deleted profile left in the file does not set the DIA`() {
+        val file = storeOf(
+            "ConfigBuilder_Enabled_INSULIN_InsulinOrefFreePeakPlugin" to true, "LocalProfile_profiles" to 1,
+            "LocalProfile_name_0" to "A", "LocalProfile_dia_0" to 6.0,
+            "LocalProfile_name_1" to "Deleted", "LocalProfile_dia_1" to 8.0
+        )
+
+        val imported = sut().importedInsulin(file, "list")!!
+
+        assertThat(imported.catalogue).contains(""""insulinEndTime":21600000""")
+        assertThat(imported.notice).isNull()
+    }
+
+    @Test fun `the DIA limit comes from the age in the file`() {
+        // The device's limit in this test is 5 to 9 h.
+        val file = storeOf(
+            "ConfigBuilder_Enabled_INSULIN_InsulinOrefFreePeakPlugin" to true, "age" to "pregnant",
+            "LocalProfile_name_0" to "A", "LocalProfile_dia_0" to 10.0
+        )
+
+        val imported = sut().importedInsulin(file, "list")!!
+
+        assertThat(imported.catalogue).contains(""""insulinEndTime":36000000""")
+        assertThat(imported.notice).isNull()
+    }
+
+    @Test fun `no plugin key but a profile DIA is v3's rapid acting`() {
+        val imported = sut().importedInsulin(storeOf("LocalProfile_name_0" to "A", "LocalProfile_dia_0" to 7.0), "list")!!
+
+        assertThat(imported.catalogue).contains(""""insulinPeakTime":${InsulinType.OREF_RAPID_ACTING.insulinPeakTime}""")
+        assertThat(imported.notice).isNull()
     }
 
     // ── harvestProfileDia: the DIA each v3 profile was using ────────────────────────────────────────

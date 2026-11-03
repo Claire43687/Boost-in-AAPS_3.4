@@ -2,6 +2,7 @@ package app.aaps.di.metro
 
 import app.aaps.ui.activities.ErrorActivity
 import app.aaps.ui.widget.BgGraphWidget
+import app.aaps.ui.widget.BoostWidget
 import app.aaps.ui.widget.CompactBgWidget
 import app.aaps.ui.widget.GlucoseCircleWidget
 import app.aaps.ui.widget.SmallWidget
@@ -18,7 +19,7 @@ import org.junit.jupiter.api.Test
  * class, the lookup by runtime class finds nothing, and `injectMetroMembers` throws - for a widget that
  * is when the home screen tries to draw it, so the user sees a widget that will not load.
  *
- * The four widgets are `AppWidgetProvider`s. They cannot extend `MetroBroadcastReceiver`, because they
+ * The widgets are `AppWidgetProvider`s. They cannot extend `MetroBroadcastReceiver`, because they
  * already extend a framework base, so they call `injectMetroMembers` themselves in `onReceive`. That
  * makes the entry easier to forget than for a class whose base class does it.
  */
@@ -27,13 +28,14 @@ class UiMemberInjectorsTest {
     private val injectors get() = testRoot().contributedMemberInjectors
 
     @Test
-    fun `the five home screen widgets have injectors`() {
+    fun `the six home screen widgets have injectors`() {
         assertThat(injectors.keys).containsAtLeast(
             Widget::class,
             BgGraphWidget::class,
             CompactBgWidget::class,
             GlucoseCircleWidget::class,
-            SmallWidget::class
+            SmallWidget::class,
+            BoostWidget::class
         )
     }
 

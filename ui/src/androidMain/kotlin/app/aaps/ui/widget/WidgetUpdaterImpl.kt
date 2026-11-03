@@ -1,6 +1,7 @@
 package app.aaps.ui.widget
 
 import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -107,8 +108,10 @@ class WidgetUpdaterImpl(
                 render(CompactBgGlanceWidget())
                 render(GlucoseCircleGlanceWidget())
             }
-            runCatching { triggerSmallWidgetUpdate() }
+            runCatching { triggerRemoteViewsUpdate(SmallWidget::class.java) }
                 .onFailure { aapsLogger.error(LTag.WIDGET, "updateSmallWidget failed: ${it.message}", it) }
+            runCatching { triggerRemoteViewsUpdate(BoostWidget::class.java) }
+                .onFailure { aapsLogger.error(LTag.WIDGET, "updateBoostWidget failed: ${it.message}", it) }
         }
     }
 
@@ -190,14 +193,15 @@ class WidgetUpdaterImpl(
     }
 
     /**
-     * SmallWidget is a classic [android.appwidget.AppWidgetProvider], not Glance,
-     * so we trigger its onUpdate via a broadcast targeted at the receiver.
+     * SmallWidget and BoostWidget are classic [AppWidgetProvider]s, not Glance, so we trigger their
+     * onUpdate via a broadcast targeted at the receiver. The explicit component keeps one provider
+     * from receiving, and drawing over, another provider's widget ids.
      */
-    private fun triggerSmallWidgetUpdate() {
-        val component = ComponentName(context, SmallWidget::class.java)
+    private fun triggerRemoteViewsUpdate(provider: Class<out AppWidgetProvider>) {
+        val component = ComponentName(context, provider)
         val ids = AppWidgetManager.getInstance(context).getAppWidgetIds(component)
         if (ids.isEmpty()) return
-        val intent = Intent(context, SmallWidget::class.java).apply {
+        val intent = Intent(context, provider).apply {
             action = AppWidgetManager.ACTION_APPWIDGET_UPDATE
             putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, ids)
         }

@@ -120,10 +120,10 @@ private val BG_VISIBLE_RANGE_KEY = ExtraStore.Key<Pair<Long?, Long?>>()
  * which was found to destabilize BG's live pinch-zoom/scroll gesture handling (BG is the only
  * graph with an interactive chart). This object's IDENTITY never changes across scroll/zoom; only
  * its field values do, read fresh whenever Vico next processes a modelProducer transaction — so
- * the chart itself is never rebuilt mid-gesture. Private to this file: BG is the only graph that
- * needs this (secondary graphs are non-interactive, so `.fixed(...)` churn never affected them).
+ * the chart itself is never rebuilt mid-gesture. BG graphs are the only ones that need this
+ * (secondary graphs are non-interactive, so `.fixed(...)` churn never affected them).
  */
-private class MutableYRangeProvider(
+internal class MutableYRangeProvider(
     @Volatile var maxX: Double,
     @Volatile var minY: Double,
     @Volatile var maxY: Double

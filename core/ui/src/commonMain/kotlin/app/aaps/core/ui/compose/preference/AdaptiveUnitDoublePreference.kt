@@ -12,6 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import app.aaps.core.data.format.NumberFormat
 import app.aaps.core.data.format.NumberFormatPlatform
+import app.aaps.core.data.model.GlucoseUnit
 import app.aaps.core.keys.interfaces.TextRef
 import app.aaps.core.keys.interfaces.UnitDoublePreferenceKey
 import app.aaps.core.keys.interfaces.VisibilityContext
@@ -20,7 +21,6 @@ import app.aaps.core.ui.compose.LocalPreferences
 import app.aaps.core.ui.compose.LocalProfileUtil
 import app.aaps.core.ui.compose.stringResource
 import app.aaps.core.ui.compose.stringResourceOrNull
-import kotlin.math.abs
 
 /**
  * Composable unit double preference for use inside card sections.
@@ -53,8 +53,10 @@ fun AdaptiveUnitDoublePreferenceItem(
     val minDisplay = profileUtil.fromMgdlToUnits(unitKey.minMgdl.toDouble())
     val maxDisplay = profileUtil.fromMgdlToUnits(unitKey.maxMgdl.toDouble())
 
-    // Detect if using mg/dL by checking if conversion preserved the value
-    val isMgdl = abs(minDisplay - unitKey.minMgdl.toDouble()) < 0.01
+    // Read the unit from the user setting. Guessing it from whether the converted minimum stayed the
+    // same fails for a key whose minimum is 0 (0 mg/dL is 0 mmol/L), which then showed mmol values with
+    // a mg/dL label and whole-number steps.
+    val isMgdl = profileUtil.units == GlucoseUnit.MGDL
 
     // Adaptive step: 1.0 for mg/dL, 0.1 for mmol/L
     val step = if (isMgdl) 1.0 else 0.1

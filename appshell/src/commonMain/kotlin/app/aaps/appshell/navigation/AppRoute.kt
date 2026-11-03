@@ -102,6 +102,9 @@ sealed class AppRoute(val route: String) {
         fun createRoute(mode: ScreenMode = ScreenMode.EDIT) = "scene_list?mode=${mode.name}"
     }
 
+    /** Boost V2 overview. Registered only in the Android activity's NavHost. */
+    data object BoostV2Overview : AppRoute("boost_v2_overview")
+
     data object SceneWizard : AppRoute("scene_wizard?sceneId={sceneId}") {
 
         fun createRoute(sceneId: String? = null): String =

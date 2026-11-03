@@ -195,7 +195,8 @@ fun MainScreen(
                     }
                 },
                 isTreatmentsEnabled = uiState.isProfileLoaded,
-                showExit = mainViewModel.showExit
+                showExit = mainViewModel.showExit,
+                showBoostOverview = mainViewModel.showBoostOverview
             )
         },
         gesturesEnabled = true,

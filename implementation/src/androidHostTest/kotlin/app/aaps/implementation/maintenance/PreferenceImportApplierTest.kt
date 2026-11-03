@@ -5,6 +5,9 @@ import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.maintenance.Prefs
+import app.aaps.core.interfaces.notifications.NotificationId
+import app.aaps.core.interfaces.notifications.NotificationLevel
+import app.aaps.core.interfaces.notifications.NotificationManager
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.plugin.PluginBase
 import app.aaps.core.interfaces.plugin.PluginBaseWithPreferences
@@ -12,6 +15,7 @@ import app.aaps.core.interfaces.plugin.PluginDescription
 import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.sharedPreferences.KeyValueStore
 import app.aaps.core.interfaces.utils.DateUtil
+import app.aaps.core.interfaces.utils.HardLimits
 import app.aaps.core.keys.BooleanComposedKey
 import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.DoubleKey
@@ -21,17 +25,21 @@ import app.aaps.core.keys.StringKey
 import app.aaps.core.keys.StringNonKey
 import app.aaps.core.keys.interfaces.NonPreferenceKey
 import app.aaps.core.keys.interfaces.Preferences
+import app.aaps.implementation.maintenance.migration.InsulinMigration
 import app.aaps.implementation.maintenance.migration.PreferenceMigrations
 import app.aaps.implementation.sharedPreferences.PreferenceKeyResolverFactory
+import app.aaps.shared.tests.generatedTextResolver
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
+import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.anyVararg
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
+import org.mockito.kotlin.times
 import org.mockito.kotlin.whenever
 
 /**
@@ -42,6 +50,7 @@ class PreferenceImportApplierTest {
 
     private val store = FakeStore()
     private val preferences = mock<Preferences>()
+    private val notificationManager = mock<NotificationManager>()
 
     private fun pumpPlugin(owned: List<NonPreferenceKey>): PluginBaseWithPreferences {
         val plugin = mock<PluginBaseWithPreferences>()
@@ -50,7 +59,7 @@ class PreferenceImportApplierTest {
         return plugin
     }
 
-    private fun sut(client: Boolean = false, plugins: List<PluginBase> = emptyList()): PreferenceImportApplier {
+    private fun sut(client: Boolean = false, plugins: List<PluginBase> = emptyList(), flavor: String = "full"): PreferenceImportApplier {
         val activePlugin = mock<ActivePlugin>()
         whenever(activePlugin.getPluginsList()).thenReturn(ArrayList(plugins))
         whenever(preferences.getAllKeys()).thenReturn(
@@ -58,6 +67,9 @@ class PreferenceImportApplierTest {
         )
         val config = mock<Config>()
         whenever(config.AAPSCLIENT).thenReturn(client)
+        whenever(config.FLAVOR).thenReturn(flavor)
+        val hardLimits = mock<HardLimits>()
+        whenever(hardLimits.diaRange()).thenReturn(5.0..10.0)
         return PreferenceImportApplier(
             store = store,
             preferences = preferences,
@@ -65,11 +77,91 @@ class PreferenceImportApplierTest {
             config = config,
             aapsLogger = mock<AAPSLogger>(),
             dateUtil = mock<DateUtil>(),
-            migrations = PreferenceMigrations(mock<AAPSLogger>(), config, mock<PersistenceLayer>(), mock<DateUtil>(), mock<ProfileUtil>())
+            migrations = PreferenceMigrations(mock<AAPSLogger>(), config, mock<PersistenceLayer>(), mock<DateUtil>(), mock<ProfileUtil>()),
+            insulinMigration = InsulinMigration(mock<AAPSLogger>(), hardLimits, generatedTextResolver()),
+            notificationManager = notificationManager
         )
     }
 
     private fun prefs(vararg pairs: Pair<String, String>) = Prefs(mapOf(*pairs), mutableMapOf())
+
+    private fun verifyNotices(count: Int) = verify(notificationManager, times(count)).post(
+        eq(NotificationId.INSULIN_MIGRATION_DEFAULT_USED), any<String>(), any<NotificationLevel>(), any<Int>(), anyOrNull(), any(), anyOrNull()
+    )
+
+    private val freePeak38 = arrayOf("ConfigBuilder_Enabled_INSULIN_InsulinOrefFreePeakPlugin" to "true", "insulin_oref_peak" to "38")
+
+    @Test fun `other builds take upload from the file`() = runTest {
+        store.putBoolean(BooleanKey.NsClientUploadData.key, false)
+        sut().apply(prefs(BooleanKey.NsClientUploadData.key to "true"), keepPumpSettings = false)
+        assertThat(store.getBoolean(BooleanKey.NsClientUploadData.key, false)).isTrue()
+    }
+
+    @Test fun `profiles that disagree give the longest DIA and a notice`() = runTest {
+        sut().apply(
+            prefs(
+                *freePeak38,
+                "LocalProfile_name_0" to "A", "LocalProfile_dia_0" to "8.5",
+                "LocalProfile_name_1" to "B", "LocalProfile_dia_1" to "9.0",
+                "LocalProfile_name_2" to "C", "LocalProfile_dia_2" to "10.0"
+            ), keepPumpSettings = false
+        )
+
+        val stored = store.getString(StringNonKey.InsulinConfiguration.key, "")
+        assertThat(stored).contains(""""insulinPeakTime":2280000""")
+        assertThat(stored).contains(""""insulinEndTime":36000000""")
+        assertThat(store.contains("insulin_oref_peak")).isFalse()
+        verifyNotices(1)
+    }
+
+    @Test fun `one DIA in the file gives that DIA and no notice`() = runTest {
+        sut().apply(prefs(*freePeak38, "LocalProfile_name_0" to "A", "LocalProfile_dia_0" to "7.0"), keepPumpSettings = false)
+
+        assertThat(store.getString(StringNonKey.InsulinConfiguration.key, "")).contains(""""insulinEndTime":25200000""")
+        verifyNotices(0)
+    }
+
+    @Test fun `a selected insulin with no DIA in the file gives a notice`() = runTest {
+        sut().apply(prefs(*freePeak38), keepPumpSettings = false)
+
+        assertThat(store.getString(StringNonKey.InsulinConfiguration.key, "")).contains(""""insulinEndTime":36000000""")
+        verifyNotices(1)
+    }
+
+    @Test fun `a file with an insulin list keeps it and gives no notice`() = runTest {
+        val list = """{"insulin":[]}"""
+        sut().apply(prefs(*freePeak38, StringNonKey.InsulinConfiguration.key to list), keepPumpSettings = false)
+
+        assertThat(store.getString(StringNonKey.InsulinConfiguration.key, "")).isEqualTo(list)
+        verifyNotices(0)
+    }
+
+    @Test fun `a file with nothing from 3_x gets no insulin list`() = runTest {
+        sut().apply(prefs(BooleanKey.GeneralSimpleMode.key to "false"), keepPumpSettings = false)
+
+        assertThat(store.contains(StringNonKey.InsulinConfiguration.key)).isFalse()
+    }
+
+    @Test fun `a client writes no list and gives no notice`() = runTest {
+        sut(client = true).apply(prefs(*freePeak38, "LocalProfile_name_0" to "A", "LocalProfile_dia_0" to "8.0", "LocalProfile_name_1" to "B", "LocalProfile_dia_1" to "9.0"), keepPumpSettings = false)
+
+        assertThat(store.contains(StringNonKey.InsulinConfiguration.key)).isFalse()
+        verifyNotices(0)
+    }
+
+    @Test fun `a 3_4 file on a PD plugin imports a PD insulin, no notice, and drops the plugin key`() = runTest {
+        sut().apply(
+            prefs("ConfigBuilder_Enabled_INSULIN_InsulinLyumjevU200PDPlugin" to "true", "LocalProfile_name_0" to "A", "LocalProfile_dia_0" to "8.0", "LocalProfile_name_1" to "B", "LocalProfile_dia_1" to "10.0"),
+            keepPumpSettings = false
+        )
+
+        val stored = store.getString(StringNonKey.InsulinConfiguration.key, "")
+        assertThat(stored).contains(""""insulinModel":"LYUMJEV_PD"""")
+        assertThat(stored).contains(""""insulinEndTime":28800000""")
+        assertThat(stored).contains(""""insulinPeakTime":2700000""")
+        assertThat(store.contains("ConfigBuilder_Enabled_INSULIN_InsulinLyumjevU200PDPlugin")).isFalse()
+        verifyNotices(0)
+    }
 
     @Test fun `a changed value is written and published once`() = runTest {
         store.putBoolean(BooleanKey.GeneralSimpleMode.key, true)

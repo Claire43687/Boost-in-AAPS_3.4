@@ -16,6 +16,8 @@ import app.aaps.core.keys.LongNonKey
 import app.aaps.plugins.sync.nsclientV3.keys.NsclientBooleanKey
 import app.aaps.plugins.sync.nsclientV3.keys.NsclientLongKey
 import app.aaps.shared.tests.TestBaseWithProfile
+import kotlinx.coroutines.flow.MutableStateFlow
+import app.aaps.core.interfaces.profile.ProfileStore
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -774,6 +776,22 @@ class DataSyncSelectorV3Test : TestBaseWithProfile() {
         sut.processChangedProfileStore()
 
         verify(nsClientV3Plugin, Times(1)).nsAdd(eq("profile"), any<DataSyncSelector.PairProfileStore>(), any(), anyOrNull())
+    }
+
+    @Test
+    fun processChangedProfileStoreDoesNotUploadStoreWithNoProfilesTest() = runTest {
+        // A new install: the store is valid, has a change time and holds nothing.
+        val empty = org.mockito.kotlin.mock<ProfileStore>()
+        whenever(empty.allProfilesValid).thenReturn(true)
+        whenever(empty.getProfileList()).thenReturn(ArrayList())
+        whenever(profileRepository.profile).thenReturn(MutableStateFlow(empty))
+        whenever(preferences.get(NsclientBooleanKey.NsPaused)).thenReturn(false)
+        whenever(preferences.get(NsclientLongKey.ProfileStoreLastSyncedId)).thenReturn(0L)
+        whenever(preferences.get(LongNonKey.LocalProfileLastChange)).thenReturn(1000L)
+
+        sut.processChangedProfileStore()
+
+        verify(nsClientV3Plugin, Times(0)).nsAdd(eq("profile"), any<DataSyncSelector.PairProfileStore>(), any(), anyOrNull())
     }
 
 

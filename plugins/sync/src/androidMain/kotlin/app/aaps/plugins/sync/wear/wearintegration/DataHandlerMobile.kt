@@ -1651,6 +1651,21 @@ class DataHandlerMobile(
         // The "time to eat" timer, on a client the copy of the master's
         val eatReminderState = eatReminder.state.value
 
+        // Boost: current DynISF / variable sensitivity from the last APS run, in profile units, for the
+        // DynISF complication. Display only: this never influences dosing. Empty when unavailable.
+        val variableSensString = (if (config.APS) loop.lastRun?.constraintsProcessed?.variableSens
+        else processedDeviceStatusData.getAPSResult()?.variableSens)?.let { sensMgdl ->
+            if (sensMgdl > 0) {
+                if (units == GlucoseUnit.MGDL) decimalFormatter.to0Decimal(sensMgdl)
+                else decimalFormatter.to1Decimal(profileUtil.fromMgdlToUnits(sensMgdl, GlucoseUnit.MMOL))
+            } else null
+        } ?: ""
+
+        // Boost: last 24 h time-in-range split for the TIR ring complication. Display only.
+        val tirWeightsString = dateUtil.now().let { nowMs ->
+            TirWeights.format(persistenceLayer.getBgReadingsDataFromTimeToTime(nowMs - T.hours(24).msecs(), nowMs, true).map { it.value })
+        }
+
         sendToWear(
             EventData.Status(
                 dataset = 0,
@@ -1676,7 +1691,9 @@ class DataHandlerMobile(
                 modeEndTime = runningModeRecord.endTimeForWatch(),
                 modeFromScene = runningModeRecord.id == activeSceneSync.getActiveState()?.scopedRecords?.rmId,
                 eatReminderStartedAt = eatReminderState?.startedAt,
-                eatReminderEndsAt = eatReminderState?.endsAt
+                eatReminderEndsAt = eatReminderState?.endsAt,
+                variableSens = variableSensString,
+                tirWeights = tirWeightsString
             )
         )
     }

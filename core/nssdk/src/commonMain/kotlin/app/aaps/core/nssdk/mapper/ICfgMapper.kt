@@ -11,7 +11,8 @@ internal fun RemoteICfg?.toNSICfg(): NSICfg? {
         insulinLabel = insulinLabel,
         insulinEndTime = insulinEndTime,
         insulinPeakTime = insulinPeakTime,
-        concentration = concentration
+        concentration = concentration,
+        insulinModel = insulinModel
     )
 }
 
@@ -23,6 +24,7 @@ internal fun NSICfg?.toRemoteICfg(): RemoteICfg? {
         insulinLabel = insulinLabel,
         insulinEndTime = insulinEndTime,
         insulinPeakTime = insulinPeakTime,
-        concentration = concentration
+        concentration = concentration,
+        insulinModel = insulinModel
     )
 }

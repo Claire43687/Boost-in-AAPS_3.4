@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.aaps.core.data.model.EPS
 import app.aaps.core.data.model.ICfg
+import app.aaps.core.data.model.InsulinModel
 import app.aaps.core.data.model.labelOfInsulin
 import app.aaps.core.data.ue.Sources
 import app.aaps.core.data.ui.ConfirmationLine
@@ -131,7 +132,7 @@ class InsulinManagementViewModel(
                 .coerceIn(0, (insulins.size - 1).coerceAtLeast(0))
             val currentICfg = insulins.getOrNull(currentIndex)
             val template = currentICfg?.let { cfg -> InsulinType.fromPeak(cfg.insulinPeakTime) }
-            val defaultNickname = template?.let { rh.gs(it.label) } ?: ""
+            val defaultNickname = currentICfg?.let { cfg -> defaultNickname(cfg.model, template) } ?: ""
             val editorNickname = currentICfg?.insulinNickname?.takeIf { it.isNotBlank() } ?: defaultNickname
             val autoNameEnabled = editorNickname == defaultNickname || autoName
 
@@ -146,6 +147,7 @@ class InsulinManagementViewModel(
                     editorConcentration = currentICfg?.let { cfg -> ConcentrationType.fromDouble(cfg.concentration) } ?: ConcentrationType.U100,
                     editorPeakMinutes = currentICfg?.peak ?: 75,
                     editorDiaHours = currentICfg?.dia ?: 5.0,
+                    editorModel = currentICfg?.model ?: InsulinModel.OREF,
                     autoNameEnabled = autoNameEnabled,
                     isLoading = false
                 )
@@ -266,8 +268,8 @@ class InsulinManagementViewModel(
         val insulins = uiState.value.insulins
         val iCfg = insulins.getOrNull(index) ?: return
         val editorTemplate = InsulinType.fromPeak(iCfg.insulinPeakTime)
-        val editorNickname = iCfg.insulinNickname.takeIf { it.isNotBlank() } ?: rh.gs(editorTemplate.label)
-        val defaultNickname = rh.gs(editorTemplate.label)
+        val defaultNickname = defaultNickname(iCfg.model, editorTemplate)
+        val editorNickname = iCfg.insulinNickname.takeIf { it.isNotBlank() } ?: defaultNickname
         val autoNameEnabled = editorNickname == defaultNickname
 
         _uiState.update {
@@ -279,6 +281,7 @@ class InsulinManagementViewModel(
                 editorConcentration = ConcentrationType.fromDouble(iCfg.concentration),
                 editorPeakMinutes = iCfg.peak,
                 editorDiaHours = iCfg.dia,
+                editorModel = iCfg.model,
                 autoNameEnabled = autoNameEnabled
             )
         }
@@ -334,7 +337,8 @@ class InsulinManagementViewModel(
             state.editorNickname != s.insulinNickname ||
                 state.editorPeakMinutes != s.peak ||
                 state.editorDiaHours != s.dia ||
-                state.editorConcentration.value != s.concentration
+                state.editorConcentration.value != s.concentration ||
+                state.editorModel != s.model
         } ?: state.editorNickname.isNotEmpty()
     }
 
@@ -369,6 +373,30 @@ class InsulinManagementViewModel(
         _uiState.update { it.copy(editorDiaHours = diaHours) }
     }
 
+    /**
+     * Switch between the oref curve and the Lyumjev PD curve. Lyumjev PD sets the end at 8 h and the nominal
+     * peak of 45 min that Boost 6.1.2's plugin reported; the curve uses neither, but DIA also sets how far back
+     * IOB looks for treatments, so it must be the curve's 8 h. Going back to oref leaves both values for the user.
+     */
+    fun updateEditorModel(model: InsulinModel) {
+        _uiState.update {
+            if (model == InsulinModel.LYUMJEV_PD)
+                it.copy(
+                    editorModel = model,
+                    editorPeakMinutes = ICfg.LYUMJEV_PD_NOMINAL_PEAK_MINUTES,
+                    editorDiaHours = ICfg.LYUMJEV_PD_END_HOURS,
+                    editorTemplate = InsulinType.fromPeak(ICfg.LYUMJEV_PD_NOMINAL_PEAK_MINUTES * 60_000L)
+                )
+            else it.copy(editorModel = model)
+        }
+        if (uiState.value.autoNameEnabled)
+            autoGenerateName()
+    }
+
+    private fun defaultNickname(model: InsulinModel, template: InsulinType?): String =
+        if (model == InsulinModel.LYUMJEV_PD) rh.gs(UiStrings.insulin_lyumjev_pd_nickname)
+        else template?.let { rh.gs(it.label) } ?: ""
+
     /** Load peak from a preset template (chips UI). Only sets peak, not DIA. */
     fun loadPeakFromPreset(preset: InsulinType) {
         _uiState.update {
@@ -382,7 +410,8 @@ class InsulinManagementViewModel(
     }
 
     fun autoGenerateName() {
-        val newDefaultNickname = rh.gs((uiState.value.editorTemplate ?: InsulinType.fromPeak(uiState.value.editorPeakMinutes.toLong() * 60_000L)).label)
+        val state = uiState.value
+        val newDefaultNickname = defaultNickname(state.editorModel, state.editorTemplate ?: InsulinType.fromPeak(state.editorPeakMinutes.toLong() * 60_000L))
         _uiState.update { it.copy(editorNickname = newDefaultNickname) }
     }
 
@@ -401,11 +430,22 @@ class InsulinManagementViewModel(
             insulinLabel = "", // the manager builds the label
             insulinEndTime = 0,
             insulinPeakTime = 0,
-            concentration = state.editorConcentration.value
+            concentration = state.editorConcentration.value,
+            model = state.editorModel
         )
         editedICfg.insulinNickname = nickname
         editedICfg.setDia(state.editorDiaHours)
         editedICfg.setPeak(state.editorPeakMinutes)
+        if (editedICfg.model == InsulinModel.LYUMJEV_PD) {
+            // Fixed for this curve whatever the editor fields say (see updateEditorModel).
+            editedICfg.setDia(ICfg.LYUMJEV_PD_END_HOURS)
+            editedICfg.setPeak(ICfg.LYUMJEV_PD_NOMINAL_PEAK_MINUTES)
+            // Lyumjev is sold as U100 and U200, the only concentrations the model has been used at.
+            if (!ICfg.lyumjevPdSupportsConcentration(editedICfg.concentration)) {
+                showSnackbar(rh.gs(UiStrings.insulin_lyumjev_pd_concentration))
+                return false
+            }
+        }
 
         // Validation
         if (editedICfg.dia !in hardLimits.diaRange()) {
@@ -538,7 +578,8 @@ class InsulinManagementViewModel(
             insulinLabel = state.editorNickname,
             insulinEndTime = 0,
             insulinPeakTime = 0,
-            concentration = state.editorConcentration.value
+            concentration = state.editorConcentration.value,
+            model = state.editorModel
         )
         iCfg.insulinNickname = state.editorNickname
         iCfg.setDia(state.editorDiaHours)

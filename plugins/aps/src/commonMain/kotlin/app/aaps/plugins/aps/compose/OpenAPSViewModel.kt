@@ -9,6 +9,7 @@ import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.aps.MealData
 import app.aaps.core.interfaces.aps.OapsProfile
 import app.aaps.core.interfaces.aps.OapsProfileAutoIsf
+import app.aaps.core.interfaces.aps.OapsProfileBoost
 import app.aaps.core.interfaces.aps.RT
 import app.aaps.core.interfaces.resources.TextResolver
 import app.aaps.core.interfaces.rx.bus.RxBus
@@ -25,6 +26,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 
 @Immutable
 data class OpenAPSUiState(
@@ -135,9 +140,10 @@ class OpenAPSViewModel(
                 )
             }
 
-            // Profile (OapsProfile or OapsProfileAutoIsf)
+            // Profile (OapsProfile, OapsProfileAutoIsf or OapsProfileBoost)
             val profileRows = lastAPSResult.oapsProfileAutoIsf?.toRows()
                 ?: lastAPSResult.oapsProfile?.toRows()
+                ?: lastAPSResult.oapsProfileBoost?.toRows()
             if (profileRows != null) {
                 add(
                     OpenAPSSection(
@@ -296,6 +302,13 @@ class OpenAPSViewModel(
         add(KeyValueRow("TDD", TDD.toString()))
     }
 
+    // OapsProfileBoost has some 75 fields and gains more with each Boost release, so its rows come
+    // from its serializer, in declaration order, rather than a hand-kept list that would fall behind.
+    private fun OapsProfileBoost.toRows(): List<KeyValueRow> =
+        rowsJson.encodeToJsonElement(OapsProfileBoost.serializer(), this).jsonObject
+            .filterValues { it !is JsonNull }
+            .map { (key, value) -> KeyValueRow(key, (value as? JsonPrimitive)?.content ?: value.toString()) }
+
     private fun OapsProfileAutoIsf.toRows(): List<KeyValueRow> = buildList {
         add(KeyValueRow("dia", dia.toString()))
         add(KeyValueRow("min_5m_carbimpact", min_5m_carbimpact.toString()))
@@ -405,3 +418,6 @@ class OpenAPSViewModel(
         isfMgdlForCarbs?.let { add(KeyValueRow("isfMgdlForCarbs", it.toString())) }
     }
 }
+
+// encodeDefaults so the fields with defaults (dynIsfMode, the debug reasons, the V5 inputs) are listed too.
+private val rowsJson = Json { encodeDefaults = true }

@@ -2,6 +2,7 @@ package app.aaps.ui.compose.insulinManagement
 
 import androidx.compose.runtime.Immutable
 import app.aaps.core.data.model.ICfg
+import app.aaps.core.data.model.InsulinModel
 import app.aaps.core.interfaces.insulin.ConcentrationType
 import app.aaps.core.interfaces.insulin.InsulinType
 import app.aaps.core.ui.compose.ScreenMode
@@ -26,6 +27,8 @@ data class InsulinManagementUiState(
     val editorConcentration: ConcentrationType = ConcentrationType.U100,
     val editorPeakMinutes: Int = 75,
     val editorDiaHours: Double = 5.0,
+    // Curve model. With Lyumjev PD the peak and DIA are fixed and the editor locks them.
+    val editorModel: InsulinModel = InsulinModel.OREF,
     val autoNameEnabled: Boolean = true,
 
     // Unsaved changes dialog

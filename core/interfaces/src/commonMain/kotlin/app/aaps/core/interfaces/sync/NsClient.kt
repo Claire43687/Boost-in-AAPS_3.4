@@ -181,4 +181,22 @@ interface NsClient : Sync {
      * Next synchronization will start from scratch
      */
     suspend fun resetToFullSync()
+
+    /**
+     * Request a bounded re-download of history from Nightscout, starting at [fromTimestamp].
+     *
+     * Added for Boost's install-time history gap: a fresh AAPS database holds far less history than
+     * the user's Nightscout site, which corrupts every history-derived quantity (TDD, and through it
+     * dynamic ISF and the Boost auto-config window). [resetToFullSync] is manual, unbounded and also
+     * resets the upload cursors. This is the download-only, time-bounded sibling: the download cursors
+     * are rewound to [fromTimestamp] and no further, upload state is untouched, and the call only arms
+     * the existing worker chain rather than doing network I/O on the calling thread.
+     *
+     * @return true if the request was armed, false if this client cannot service it. The default
+     *         returns false, so a client without an implementation reports that honestly.
+     */
+    fun requestHistoryBackfill(fromTimestamp: Long): Boolean = false
+
+    /** True from an accepted [requestHistoryBackfill] until its download chain completes. */
+    val historyBackfillActive: Boolean get() = false
 }

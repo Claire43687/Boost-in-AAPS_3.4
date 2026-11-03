@@ -2,13 +2,20 @@ package app.aaps.implementation.maintenance.migration
 
 import app.aaps.core.data.configuration.Constants
 import app.aaps.core.data.model.ICfg
+import app.aaps.core.data.model.InsulinModel
 import app.aaps.core.interfaces.insulin.InsulinType
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.resources.TextResolver
 import app.aaps.core.interfaces.sharedPreferences.KeyValueStore
 import app.aaps.core.interfaces.utils.HardLimits
+import app.aaps.core.objects.extensions.toJsonObject
+import app.aaps.core.keys.ProfileIntKey
+import app.aaps.core.keys.StringKey
+import app.aaps.implementation.ImplementationStrings
 import dev.zacsweers.metro.Inject
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
 
 /**
  * Which insulin the records that predate ICfg were delivered with.
@@ -69,6 +76,10 @@ class InsulinMigration(
     fun readLegacyInsulin(sp: KeyValueStore): LegacyInsulin {
         fun selected(plugin: String) =
             sp.getBoolean("ConfigBuilder_Enabled_INSULIN_$plugin", false) || sp.getBoolean("ConfigBuilder_INSULIN_${plugin}_Enabled", false)
+
+        // Boost 3.4 only. The curve is a model in 4.0, not a template, so it cannot go through the `when`.
+        if (selected("InsulinLyumjevU100PDPlugin") || selected("InsulinLyumjevU200PDPlugin"))
+            return LegacyInsulin(LYUMJEV_PD_NICKNAME, ICfg.LYUMJEV_PD_NOMINAL_PEAK_MINUTES * 60_000L, fromExplicitKey = true, model = InsulinModel.LYUMJEV_PD)
 
         val explicit = when {
             selected("InsulinOrefRapidActingPlugin")      -> InsulinType.OREF_RAPID_ACTING
@@ -149,7 +160,12 @@ class InsulinMigration(
      * [activeProfileName] is the running record's `originalProfileName`, used to pick that profile's DIA out
      * of the harvest.
      */
-    fun plan(recordICfg: ICfg?, legacy: LegacyInsulin?, harvest: ProfileDiaHarvest, activeProfileName: String?): InsulinMigrationPlan {
+    fun plan(recordICfg: ICfg?, legacy: LegacyInsulin?, harvest: ProfileDiaHarvest, activeProfileName: String?, upgradingFrom3x: Boolean = true): InsulinMigrationPlan {
+        // Ahead of the record. 3.4 computed IOB with the selected plugin whatever the running row said, and the
+        // curve fixes its own end, so nothing has to be found. Answers once: the keys are deleted at this start.
+        // [upgradingFrom3x] false: earlier 4.0 builds left these keys behind, and that person may have chosen
+        // another insulin since, so with a usable record the keys say nothing about what is in the pump now.
+        if (legacy?.model == InsulinModel.LYUMJEV_PD && (upgradingFrom3x || recordICfg?.isUsable != true)) return plan(lyumjevPdICfg(), InsulinMigrationPlan.Source.LEGACY_KEYS)
         if (recordICfg?.isUsable == true) return plan(recordICfg, InsulinMigrationPlan.Source.RECORD)
         // Null only if nothing read the store, which the start-up order rules out. Same treatment as an
         // install with no row: v3's own default.
@@ -172,11 +188,65 @@ class InsulinMigration(
         return plan(iCfg, source)
     }
 
+    /**
+     * The insulin list for a settings file from 3.x, which holds its insulin in the old names and has no list.
+     * Null when the file has a list, or holds nothing from 3.x. [PreferenceMigrations] deletes those names, so
+     * this reads the file before it runs.
+     *
+     * The file does not say which profile was running, so when its profiles disagree on the DIA the longest
+     * stands in. Modelling choice: a DIA that is too long keeps insulin in IOB for longer, which is the side
+     * that gives less. [ImportedInsulin.notice] tells the user whenever the DIA is not the file's one value.
+     */
+    fun importedInsulin(file: KeyValueStore, catalogueKey: String): ImportedInsulin? {
+        if (file.contains(catalogueKey)) return null
+        val legacy = readLegacyInsulin(file)
+        // The curve fixes its own end, so there is no DIA to choose and nothing to check.
+        if (legacy.model == InsulinModel.LYUMJEV_PD) return ImportedInsulin(catalogueOf(lyumjevPdICfg()), notice = null)
+        val dias = harvestProfileDia(liveProfiles(file)).nameToDia.values.distinct()
+        if (!legacy.fromExplicitKey && dias.isEmpty()) return null
+        // The file's age, not this device's: the file is about to set it, and a DIA outside the limits stops the loop.
+        val limits = HardLimits.AgeType.entries.firstOrNull { it.name.replace("_", "").equals(file.getString(StringKey.SafetyAge.key, ""), ignoreCase = true) }
+            ?.let { HardLimits.LIMIT_DIA.getValue(it) } ?: hardLimits.diaRange()
+        val dia = (dias.maxOrNull() ?: limits.endInclusive).coerceIn(limits)
+        val iCfg = ICfg(insulinLabel = "", insulinEndTime = (dia * 3600 * 1000).toLong(), insulinPeakTime = legacy.peakTime, concentration = 1.0)
+            .also { it.insulinNickname = legacy.nickname }
+        return ImportedInsulin(
+            catalogue = catalogueOf(iCfg),
+            notice = if (dias.singleOrNull() == dia) null else rh.gs(ImplementationStrings.insulin_import_check_dia, dia, legacy.nickname)
+        )
+    }
+
+    // Concentration stays 1.0 although the plugin may be U200: such a user halved basals and doubled ISFs, so
+    // setting 2.0 would change what is delivered. Modelling choice, doses first; see the commit message.
+    private fun lyumjevPdICfg() = ICfg(
+        insulinLabel = "",
+        peak = ICfg.LYUMJEV_PD_NOMINAL_PEAK_MINUTES,
+        dia = ICfg.LYUMJEV_PD_END_HOURS,
+        concentration = 1.0,
+        model = InsulinModel.LYUMJEV_PD
+    ).also { it.insulinNickname = LYUMJEV_PD_NICKNAME }
+
+    // A deleted profile only lowers the count: its numbered names stay in the file, and no profile uses them.
+    private fun liveProfiles(file: KeyValueStore): KeyValueStore {
+        val count = file.getInt(ProfileIntKey.AmountOfProfiles.key, Int.MAX_VALUE)
+        val numbered = Regex("^${Constants.LOCAL_PROFILE}_(?:(?:name|dia)_(\\d+)|(\\d+)_(?:name|dia))$")
+        return FileKeyValueStore(file.getAll().filterKeys { key ->
+            val number = numbered.find(key)?.groupValues?.drop(1)?.firstOrNull { it.isNotEmpty() }?.toIntOrNull()
+            number == null || number < count
+        })
+    }
+
+    private fun catalogueOf(iCfg: ICfg): String =
+        buildJsonObject { put("insulin", buildJsonArray { add(iCfg.toJsonObject()) }) }.toString()
+
     private fun plan(iCfg: ICfg, source: InsulinMigrationPlan.Source): InsulinMigrationPlan {
         aapsLogger.info(LTag.CORE, "Insulin migration: ${iCfg.peak} min peak, ${iCfg.dia} h DIA, from $source")
         return InsulinMigrationPlan(iCfg, source)
     }
 }
+
+/** What [InsulinMigration.importedInsulin] read from a file: the insulin list, and what to tell the user, if anything. */
+data class ImportedInsulin(val catalogue: String, val notice: String?)
 
 /**
  * The insulin plugin a v3 install had selected. Everything about it except the DIA, which the profile owned.
@@ -184,7 +254,10 @@ class InsulinMigration(
  * [fromExplicitKey] is false when no ConfigBuilder row said so and v3's own default was taken instead. The
  * insulin is still right either way; the flag only says how much is left to guess if the DIA is missing too.
  */
-data class LegacyInsulin(val nickname: String, val peakTime: Long, val fromExplicitKey: Boolean)
+data class LegacyInsulin(val nickname: String, val peakTime: Long, val fromExplicitKey: Boolean, val model: InsulinModel = InsulinModel.OREF)
+
+/** Same text as the insulin editor's `insulin_lyumjev_pd_nickname`, which lives in `:ui`, out of reach here. */
+private const val LYUMJEV_PD_NICKNAME = "Lyumjev PD"
 
 /** The DIA each v3 local profile was using, and the legacy names those values came from. */
 data class ProfileDiaHarvest(val nameToDia: Map<String, Double>, val keysToRemove: List<String>) {
@@ -222,6 +295,14 @@ data class InsulinMigrationPlan(val iCfg: ICfg, val source: Source) {
          */
         NO_LEGACY_DATA
     }
+
+    /**
+     * True when the user was on a PD plugin but the running record is not PD. 3.4 made no profile switch when the
+     * plugin changed, and new boluses take their insulin from the running record, so without a switch they
+     * would be oref. [record] is the running insulin as it was before the stamp, null when nothing usable runs.
+     */
+    fun runningRecordNeedsSwitch(record: ICfg?): Boolean =
+        iCfg.model == InsulinModel.LYUMJEV_PD && record != null && record.model != InsulinModel.LYUMJEV_PD
 
     /** True when the user has to be told, because part of [iCfg] was invented and will not be corrected later. */
     val isGuess: Boolean get() = source == Source.GUESSED_DIA || source == Source.NO_LEGACY_DATA

@@ -1,19 +1,49 @@
-# AAPS
-* Check the wiki: https://wiki.aaps.app
-* Want to contribute? Please read [CONTRIBUTING.md](CONTRIBUTING.md) first — note that AI-generated pull requests are not welcome.
-*  Everyone who’s been looping with AAPS needs to fill out the form after 3 days of looping  https://docs.google.com/forms/d/14KcMjlINPMJHVt28MDRupa4sz4DDIooI4SrW0P3HSN8/viewform?c=0&w=1
+# Boost in AAPS 4.0
 
-[![Support Server](https://img.shields.io/discord/629952586895851530.svg?label=Discord&logo=Discord&colorB=7289da&style=for-the-badge)](https://discord.gg/4fQUWHZ4Mw)
+Boost is an independently maintained variant of [AAPS](https://github.com/nightscout/AndroidAPS)
+4.0.0 that adds the Boost APS plugin. It is not a release of, or supported by, the AAPS project.
+You build it yourself and you are responsible for how you use it. AGPL-3.0, as AAPS.
 
-[![CircleCI](https://circleci.com/gh/nightscout/AndroidAPS/tree/master.svg?style=svg)](https://circleci.com/gh/nightscout/AndroidAPS/tree/master)
-[![Crowdin](https://d322cqt584bo4o.cloudfront.net/androidaps/localized.svg)](https://translations.aaps.app/project/androidaps)
-[![Documentation Status](https://readthedocs.org/projects/androidaps/badge/?version=latest)](https://wiki.aaps.app/en/latest/?badge=latest)
-[![codecov](https://codecov.io/gh/nightscout/AndroidAPS/branch/master/graph/badge.svg?token=EmklfIV6bH)](https://codecov.io/gh/nightscout/AndroidAPS)
+This line is Boost 6.2.0: the V6 meal logic and the Boost high temp, with each SMB sized by the
+oref tiers.
 
-DEV: 
-[![CircleCI](https://circleci.com/gh/nightscout/AndroidAPS/tree/dev.svg?style=svg)](https://circleci.com/gh/nightscout/AndroidAPS/tree/dev)
-[![codecov](https://codecov.io/gh/nightscout/AndroidAPS/branch/dev/graph/badge.svg?token=EmklfIV6bH)](https://codecov.io/gh/nightscout/AndroidAPS/tree/dev)
+## Installing over your current build
 
-<img src="https://cdn.iconscout.com/icon/free/png-256/bitcoin-384-920569.png" srcset="https://cdn.iconscout.com/icon/free/png-512/bitcoin-384-920569.png 2x" alt="Bitcoin Icon" width="100">
+Android installs over an existing AAPS only when the new APK is signed with the same key. The
+workflow below uses the signing key already held in your repository's secrets. Android 12 or later
+is required.
 
-3KawK8aQe48478s6fxJ8Ms6VTWkwjgr9f2
+Before you start, export your settings in AAPS and keep your current APK. The move to 4.0 changes
+the database and the settings store, and neither can be read by an older build. To go back, you
+reinstall the older APK after uninstalling and import the export.
+
+The same applies to a standard AAPS 4.0 build. It installs over Boost, because the package and
+version code are the same, but it cannot open Boost's database and the app stops at start, so the
+loop does not run. To move from Boost to standard AAPS, export your settings, uninstall Boost,
+install AAPS and import the export.
+
+### You already build AAPS in the browser
+
+1. In your existing AndroidAPS fork on GitHub, choose Add file, Create new file, and name it
+   `.github/workflows/boost-ci.yml`.
+2. Paste in the contents of [boost-ci.yml](.github/workflows/boost-ci.yml) and commit.
+3. Under Actions, run Boost CI and select the release.
+4. Install `boost-<release>.apk` from the `AAPS/<release>` folder in your Google Drive, over your
+   current app.
+
+Your fork's `KEYSTORE_SET` and `GDRIVE_OAUTH2` secrets are used as they are.
+
+### You are new to browser builds
+
+Fork this repository, enable Actions, and create the two secrets with the
+[AAPS browser build instructions](https://androidaps.readthedocs.io/en/latest/SettingUpAaps/BrowserBuild.html).
+Then run Boost CI. To reuse the key from another repository, run CI Keystore Export there first.
+
+### You build in Android Studio
+
+Check out the release tag and build `fullRelease` with your existing keystore.
+
+## After installing
+
+Open Config Builder and check that OpenAPS Boost is the selected APS. Check your maximum IOB and
+SMB settings, then watch the first cycles in the APS tab before relying on it.

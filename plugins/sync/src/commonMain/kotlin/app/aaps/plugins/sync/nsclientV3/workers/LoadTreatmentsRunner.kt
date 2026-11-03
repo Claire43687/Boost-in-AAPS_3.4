@@ -37,7 +37,8 @@ class LoadTreatmentsRunner(
             while (continueLoading) {
                 val isFirstLoad = nsClientV3Plugin.isFirstLoad(NsClient.Collection.TREATMENTS)
                 val lastLoaded =
-                    if (isFirstLoad) max(nsClientV3Plugin.firstLoadContinueTimestamp.collections.treatments, dateUtil.now() - nsClientV3Plugin.maxAge)
+                    // See LoadBgRunner: bounded-backfill floor, inert unless one is in flight.
+                    if (isFirstLoad) max(nsClientV3Plugin.firstLoadContinueTimestamp.collections.treatments, nsClientV3Plugin.firstLoadFloor())
                     else max(nsClientV3Plugin.lastLoadedSrvModified.collections.treatments, dateUtil.now() - nsClientV3Plugin.maxAge)
                 if ((nsClientV3Plugin.newestDataOnServer?.collections?.treatments ?: Long.MAX_VALUE) > lastLoaded) {
                     val treatments: List<NSTreatment>
@@ -64,7 +65,7 @@ class LoadTreatmentsRunner(
                         nsClientRepository.addLog("◄ $action", "${treatments.size} TRs from ${dateUtil.dateAndTimeAndSecondsString(lastLoaded)}")
                         // Schedule processing of fetched data and continue of loading
                         continueLoading =
-                            !cursorStalled && nsIncomingDataProcessor.processTreatments(response.values, nsClientV3Plugin.doingFullSync, advanceInitialLoadCursor = true)
+                            !cursorStalled && nsIncomingDataProcessor.processTreatments(response.values, nsClientV3Plugin.doingFullSync, advanceInitialLoadCursor = true, historyBackfill = nsClientV3Plugin.historyBackfillFrom > 0L)
                     } else {
                         // End first load
                         if (isFirstLoad) {

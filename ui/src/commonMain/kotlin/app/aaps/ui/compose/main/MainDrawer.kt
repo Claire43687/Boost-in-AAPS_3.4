@@ -24,11 +24,14 @@ import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.unit.dp
 import app.aaps.core.interfaces.navigation.ElementType
 import app.aaps.core.ui.compose.LocalAppIcon
+import app.aaps.core.ui.compose.icons.library.unused.IcPluginOverview
 import app.aaps.core.ui.compose.navigation.NavigationRequest
 import app.aaps.core.ui.compose.navigation.description
 import app.aaps.core.ui.compose.navigation.icon
 import app.aaps.core.ui.compose.navigation.label
+import app.aaps.core.ui.compose.stringResource
 import app.aaps.core.ui.compose.stringResourceOrNull
+import app.aaps.ui.UiStrings
 
 @Composable
 fun MainDrawer(
@@ -42,7 +45,9 @@ fun MainDrawer(
     isTreatmentsEnabled: Boolean,
     /** False on iOS, where the app may not close itself. See `MainViewModel.showExit`. */
     showExit: Boolean,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** Android only: the Boost V2 overview route exists in the Android activity alone. */
+    showBoostOverview: Boolean = false
 ) {
     ModalDrawerSheet(
         drawerState = drawerState,
@@ -72,6 +77,12 @@ fun MainDrawer(
         ) {
             Spacer(modifier = Modifier.height(8.dp))
 
+            if (showBoostOverview)
+                DrawerMenuItem(
+                    label = stringResource(UiStrings.boost_overview_title),
+                    icon = IcPluginOverview,
+                    onClick = { onNavigate(NavigationRequest.BoostOverview) }
+                )
             DrawerMenuItem(ElementType.TREATMENTS, enabled = isTreatmentsEnabled) { onNavigate(NavigationRequest.Element(ElementType.TREATMENTS)) }
             DrawerMenuItem(ElementType.HISTORY_BROWSER) { onNavigate(NavigationRequest.Element(ElementType.HISTORY_BROWSER)) }
             DrawerMenuItem(ElementType.STATISTICS) { onNavigate(NavigationRequest.Element(ElementType.STATISTICS)) }

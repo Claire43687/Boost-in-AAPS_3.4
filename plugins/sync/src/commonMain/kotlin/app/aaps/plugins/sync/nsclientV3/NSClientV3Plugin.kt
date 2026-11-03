@@ -118,7 +118,10 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.math.max
+import kotlin.time.Duration.Companion.milliseconds
 import dev.zacsweers.metro.IntKey as MetroIntKey
 
 /** The Nightscout address as the setting holds it, in the form `NSAndroidClientImpl` takes: no scheme, no last slash. */
@@ -255,7 +258,42 @@ class NSClientV3Plugin(
      * Full sync is performed right now
      */
     @Volatile var doingFullSync = false
+    @Volatile private var fullSyncStartedAt = 0L
         @VisibleForTesting set
+
+    /**
+     * Lower bound (epoch ms) for a BOUNDED history backfill requested via [requestHistoryBackfill].
+     * 0 = none, and the first load then falls back to the usual `now - maxAge` (100 day) ceiling.
+     *
+     * PERSISTED, unlike [firstLoadContinueTimestamp]: an app restart part-way through a backfill
+     * would otherwise lose the bound and silently widen a deliberate 30-day request into a 100-day
+     * one. Only consulted on the FIRST-LOAD branch of the load runners, so it is inert once the
+     * collection's `lastLoadedSrvModified` is set; [resetToFullSync] clears it so a manual, genuinely
+     * full sync is never clamped by a stale bound.
+     */
+    internal var historyBackfillFrom: Long
+        get() = preferences.get(NsclientLongKey.HistoryBackfillFrom)
+        set(value) = preferences.put(NsclientLongKey.HistoryBackfillFrom, value)
+
+    /**
+     * Oldest timestamp the first load may reach back to: the 100-day ceiling, raised by an active
+     * bounded-backfill request. Used by `LoadBgRunner` and `LoadTreatmentsRunner`.
+     */
+    internal fun firstLoadFloor(): Long = max(dateUtil.now() - maxAge, historyBackfillFrom)
+
+    /**
+     * Bound of a backfill that has been accepted but whose chain has not started (0 = none). In memory
+     * only, like [fullSyncRequested]: a request lost to a restart is retried by the caller's own
+     * cooldown.
+     *
+     * 3.4 guarded this and fullSyncRequested with one lock. In 4.0 fullSyncRequested is an atomic
+     * claimed by compareAndSet, so this is an atomic too: [requestHistoryBackfill] stores it before
+     * raising the flag, and [beginRound] takes it with exchange() only after winning the flag. The
+     * worst interleaving (a round claims an earlier flag between the two stores) applies the rewind
+     * one round early and leaves one extra full-sync round with nothing rewound, which only widens
+     * what that round accepts.
+     */
+    @VisibleForTesting internal val pendingBackfillFrom = AtomicLong(0L)
 
     // Binding and unbinding the connection lives in ServiceNsConnection, so this plugin names no
     // Android Service at all.
@@ -744,9 +782,68 @@ class NSClientV3Plugin(
         lastLoadedSrvModified = LastModified(LastModified.Collections())
         lastLoadedDeviceStatusSrvModified = 0L
         initialLoadFinished = false
+        // A manual full sync is deliberately unbounded: drop any bounded-backfill floor, or it
+        // would silently clamp this to the last requested window.
+        historyBackfillFrom = 0L
         storeLastLoadedSrvModified()
         dataSyncSelectorV3.resetToNextFullSync()
+        pendingBackfillFrom.store(0L)
         fullSyncRequested.store(true)
+    }
+
+    /**
+     * Bounded, download-only history backfill, see [NsClient.requestHistoryBackfill].
+     *
+     * Rewinds ONLY the two download cursors that matter for a history gap (entries + treatments)
+     * back to [fromTimestamp], and marks the load as a full sync so the NS "accept data" preferences,
+     * all of which ship OFF, do not silently discard the very records being fetched. It does NOT
+     * touch [dataSyncSelectorV3], so nothing is re-uploaded to the server.
+     *
+     * Non-blocking for the caller: the fetch is the existing load chain run by [nsLoadExecutor], and
+     * [executeLoop] is started on this plugin's own scope.
+     *
+     * The rewind is NOT applied here. It is held in [pendingBackfillFrom] and applied by
+     * [beginRound] in the same step that sets [doingFullSync], so the rewound cursors and the
+     * full-sync flag always reach the same chain. Rewinding here (as before) let a round
+     * already in flight, with [doingFullSync] false, consume the rewound cursors with the accept
+     * preferences in force. On a migrated install that kept boluses ("receive insulin" on) and
+     * dropped every effective profile switch, so no day had a profile throughout, the TDD calculator
+     * returned no days, auto-config stayed at days=0/7 and the full-sync flag was then spent on a
+     * round with nothing left to fetch.
+     *
+     * 3.4 waited out a round in flight with `executeLoop(forceNew = true)`. 4.0 has no forceNew:
+     * [executeLoop] sets [pendingLoop] when a chain is running and the idle watchdog in [onStart]
+     * re-runs it, which is the same wait without a sleeping thread.
+     */
+    override fun requestHistoryBackfill(fromTimestamp: Long): Boolean {
+        if (!isEnabled()) return false
+        if (preferences.get(NsclientBooleanKey.NsPaused)) return false
+        if (preferences.get(StringKey.NsClientUrl).isBlank()) return false
+        // Never reach back further than this client would on a first load anyway.
+        val from = max(fromTimestamp, dateUtil.now() - maxAge)
+        pendingBackfillFrom.store(from)
+        fullSyncRequested.store(true)
+        nsClientRepository.addLog("● RUN", "History backfill requested from ${dateUtil.dateAndTimeAndSecondsString(from)}")
+        scope.launch { executeLoop("HISTORY_BACKFILL") }
+        return true
+    }
+
+    override val historyBackfillActive: Boolean get() = pendingBackfillFrom.load() > 0L || historyBackfillFrom > 0L
+
+    /**
+     * Rewind the entries and treatments download cursors to [from]. Zeroing lastLoadedSrvModified is
+     * what makes isFirstLoad() true, which is the branch that honours firstLoadContinueTimestamp and
+     * the floor; the runners restore it themselves when the load completes, as on a fresh install.
+     * Called only from [beginRound], with no chain running.
+     */
+    private fun applyHistoryBackfill(from: Long) {
+        historyBackfillFrom = from
+        firstLoadContinueTimestamp.collections.entries = from
+        firstLoadContinueTimestamp.collections.treatments = from
+        lastLoadedSrvModified.collections.entries = 0L
+        lastLoadedSrvModified.collections.treatments = 0L
+        initialLoadFinished = false
+        storeLastLoadedSrvModified()
     }
 
     override fun handleClearAlarm(originalAlarm: NSAlarm, silenceTimeInMilliseconds: Long) {
@@ -1189,8 +1286,11 @@ class NSClientV3Plugin(
     }
 
     internal fun executeLoop(origin: String) {
+        // A pending backfill must still run on a client whose initial load has finished;
+        // the round in flight when it was requested sets initialLoadFinished on completion.
+        val backfillPending = pendingBackfillFrom.load() > 0L
         // After the first load, data comes over the websocket while it is up; the loop is needed only without it.
-        if (initialLoadFinished && !needsPolling()) return
+        if (initialLoadFinished && !needsPolling() && !backfillPending) return
         if (preferences.get(NsclientBooleanKey.NsPaused)) {
             nsClientRepository.addLog("● RUN", "paused  $origin")
             return
@@ -1206,12 +1306,7 @@ class NSClientV3Plugin(
             return
         }
         nsClientRepository.addLog("● RUN", "Starting next round $origin")
-        // compareAndSet, not a lock: the same test-and-clear the pending flags above use. It is what
-        // makes "was a full sync requested" and "claim it" one step.
-        if (fullSyncRequested.compareAndSet(true, false)) {
-            doingFullSync = true
-            nsClientRepository.addLog("● RUN", "Full sync is requested")
-        }
+        beginRound()
         nsClientRepository.updateStatus(status)
         nsLoadExecutor.runChain(
             listOf(
@@ -1232,8 +1327,35 @@ class NSClientV3Plugin(
         )
     }
 
+    /**
+     * Start-of-round bookkeeping, run by [executeLoop] immediately before it starts a load chain.
+     * A requested full sync becomes [doingFullSync] here, and a pending bounded backfill rewinds the
+     * cursors in the same step, so the chain about to start is the one that carries both.
+     */
+    @VisibleForTesting internal fun beginRound() {
+        // compareAndSet, not a lock: the same test-and-clear the pending flags above use. It is what
+        // makes "was a full sync requested" and "claim it" one step.
+        if (fullSyncRequested.compareAndSet(true, false)) {
+            doingFullSync = true
+            fullSyncStartedAt = dateUtil.now()
+            val backfillFrom = pendingBackfillFrom.exchange(0L)
+            if (backfillFrom > 0L) applyHistoryBackfill(backfillFrom)
+            nsClientRepository.addLog("● RUN", "Full sync is requested")
+        }
+    }
+
+    /**
+     * A full sync bypasses the accept preferences, so a load that keeps failing part-way must not
+     * hold it open: past the limit the next upload ends it, and a Boost backfill's retry rewinds again.
+     */
+    internal val fullSyncShouldEnd: Boolean
+        get() = initialLoadFinished || dateUtil.now() - fullSyncStartedAt >= T.hours(6).msecs()
+
     fun endFullSync() {
         doingFullSync = false
+        // The whole loader chain completed, so any bounded backfill is done. If it FAILED part-way
+        // the chain never reaches here and the floor survives, so the next round resumes bounded.
+        historyBackfillFrom = 0L
     }
 
     internal fun executeUpload(origin: String) {

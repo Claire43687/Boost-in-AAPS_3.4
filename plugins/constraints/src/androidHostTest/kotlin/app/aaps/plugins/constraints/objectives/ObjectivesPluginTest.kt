@@ -10,7 +10,9 @@ import app.aaps.core.interfaces.utils.HardLimits
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.objects.constraints.ConstraintObject
 import app.aaps.implementation.sharedPreferences.PreferencesImpl
+import app.aaps.plugins.constraints.ConstraintsStrings
 import app.aaps.plugins.constraints.ConstraintsStringsValues
+import app.aaps.plugins.constraints.objectives.objectives.Objective
 import app.aaps.plugins.constraints.objectives.objectives.Objective0
 import app.aaps.plugins.constraints.objectives.objectives.Objective1
 import app.aaps.plugins.constraints.objectives.objectives.Objective2
@@ -72,6 +74,32 @@ class ObjectivesPluginTest : TestBaseWithProfile() {
         )
         objectivesPlugin = ObjectivesPlugin(aapsLogger, text, emulatedPreferences, config, objectives, mock())
         runBlocking { objectivesPlugin.onStart() }
+    }
+
+    private val newObjective by lazy {
+        object : Objective(
+            emulatedPreferences, text, dateUtil, PlainDurationText(), "newobjective",
+            ConstraintsStrings.objectives_auto_objective, ConstraintsStrings.objectives_auto_gate
+        ) {}
+    }
+
+    @Test fun `a new objective is waived once all ten are finished`() {
+        objectivesPlugin.objectives.forEach { it.accomplishedOn = dateUtil.now() - 1 }
+        assertThat(newObjective.isStarted).isTrue()
+        assertThat(newObjective.isAccomplished).isTrue()
+    }
+
+    @Test fun `a new objective stays in place until all ten are finished`() {
+        objectivesPlugin.objectives.forEach { it.accomplishedOn = dateUtil.now() - 1 }
+        objectivesPlugin.objectives.last().accomplishedOn = 0
+        assertThat(newObjective.isStarted).isFalse()
+        assertThat(newObjective.isAccomplished).isFalse()
+    }
+
+    @Test fun `an unfinished original objective is never waived`() {
+        objectivesPlugin.objectives.forEach { it.accomplishedOn = dateUtil.now() - 1 }
+        objectivesPlugin.objectives.first().accomplishedOn = 0
+        assertThat(objectivesPlugin.objectives.first().isAccomplished).isFalse()
     }
 
     @Test fun notStartedObjectivesShouldLimitLoopInvocation() {

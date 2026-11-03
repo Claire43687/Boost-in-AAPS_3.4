@@ -23,6 +23,7 @@ class TriggerBgTest : TriggerTestBase() {
     @Test
     fun shouldRunTest() = runTest {
         whenever(autosensDataStore.getBucketedDataTableCopy()).thenReturn(generateOneCurrentRecordBgData())
+        whenever(autosensDataStore.getBucketedDataNativeTableCopy()).thenReturn(generateOneCurrentRecordBgData())
         var t: TriggerBg = TriggerBg(triggerDeps).setUnits(GlucoseUnit.MMOL).setValue(4.1).comparator(Comparator.Compare.IS_EQUAL)
         assertThat(t.shouldRun()).isFalse()
         t = TriggerBg(triggerDeps).setUnits(GlucoseUnit.MGDL).setValue(214.0).comparator(Comparator.Compare.IS_EQUAL)
@@ -42,6 +43,7 @@ class TriggerBgTest : TriggerTestBase() {
         t = TriggerBg(triggerDeps).setUnits(GlucoseUnit.MGDL).setValue(213.0).comparator(Comparator.Compare.IS_EQUAL_OR_LESSER)
         assertThat(t.shouldRun()).isFalse()
         whenever(autosensDataStore.getBucketedDataTableCopy()).thenReturn(ArrayList())
+        whenever(autosensDataStore.getBucketedDataNativeTableCopy()).thenReturn(ArrayList())
         t = TriggerBg(triggerDeps).setUnits(GlucoseUnit.MGDL).setValue(213.0).comparator(Comparator.Compare.IS_EQUAL_OR_LESSER)
         assertThat(t.shouldRun()).isFalse()
         t = TriggerBg(triggerDeps).comparator(Comparator.Compare.IS_NOT_AVAILABLE)

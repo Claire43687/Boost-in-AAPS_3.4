@@ -378,6 +378,28 @@ private val migration35to36 = object : Migration(35, 36) {
     }
 }
 
+/**
+ * Adds the insulin curve model to the three tables that embed `InsulinConfiguration`. Every existing row was
+ * computed with the oref curve, the only one there was, so the default 'OREF' is the value those rows had.
+ * Boost brings the Lyumjev PD curve, which is the other value. The exception is a row from a Boost 3.4 PD
+ * plugin, which that plugin's label identifies (the string has no translation). Such a row was computed with PD
+ * and holds the profile's DIA, so it takes the curve's fixed 8 h and nominal 45 min as well.
+ */
+private val migration36to37 = object : Migration(36, 37) {
+    override fun migrate(connection: SQLiteConnection) {
+        connection.execSQL("ALTER TABLE `$TABLE_BOLUSES` ADD COLUMN `insulinModel` TEXT NOT NULL DEFAULT 'OREF'")
+        connection.execSQL("ALTER TABLE `$TABLE_PROFILE_SWITCHES` ADD COLUMN `insulinModel` TEXT NOT NULL DEFAULT 'OREF'")
+        connection.execSQL("ALTER TABLE `$TABLE_EFFECTIVE_PROFILE_SWITCHES` ADD COLUMN `insulinModel` TEXT NOT NULL DEFAULT 'OREF'")
+        listOf(TABLE_BOLUSES, TABLE_PROFILE_SWITCHES, TABLE_EFFECTIVE_PROFILE_SWITCHES).forEach { table ->
+            connection.execSQL(
+                "UPDATE `$table` SET insulinModel = 'LYUMJEV_PD', insulinEndTime = 28800000, insulinPeakTime = 2700000 " +
+                    "WHERE insulinLabel IN ('Lyumjev U100 Glucodynamic', 'Lyumjev U200 Glucodynamic')"
+            )
+        }
+        dropCustomIndexes(connection)
+    }
+}
+
 /** Every migration, in order. Passed to the Room builder by each platform. */
 internal val databaseMigrations: Array<Migration> = arrayOf(
     migration22to23,
@@ -394,4 +416,5 @@ internal val databaseMigrations: Array<Migration> = arrayOf(
     migration33to34,
     migration34to35,
     migration35to36,
+    migration36to37,
 )

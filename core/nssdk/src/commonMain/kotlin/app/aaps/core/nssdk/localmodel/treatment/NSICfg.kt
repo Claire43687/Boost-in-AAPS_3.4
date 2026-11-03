@@ -7,5 +7,7 @@ data class NSICfg(
     val insulinLabel: String,
     val insulinEndTime: Long,
     val insulinPeakTime: Long,
-    val concentration: Double
+    val concentration: Double,
+    /** Curve model name, null for oref (see `RemoteICfg.insulinModel`). */
+    val insulinModel: String? = null
 )

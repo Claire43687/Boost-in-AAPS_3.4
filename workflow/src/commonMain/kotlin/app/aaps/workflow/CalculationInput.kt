@@ -21,7 +21,9 @@ class PrepareGraphData(
     val bgDataReload: Boolean,
     val limitDataToOldestAvailable: Boolean,
     val triggeredByNewBG: Boolean,
-    val emitFinalProgress: Boolean
+    val emitFinalProgress: Boolean,
+    // MAIN only: start a loop run as soon as IOB/COB is published, ahead of the graph data.
+    val invokeLoop: Boolean = false
 )
 
 /** The input of the phase that runs after [PrepareGraphData]. */

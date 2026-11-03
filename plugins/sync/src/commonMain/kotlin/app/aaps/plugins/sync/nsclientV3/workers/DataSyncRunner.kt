@@ -27,7 +27,8 @@ class DataSyncRunner(
 ) {
 
     suspend fun run(): WorkOutcome {
-        if (nsClientV3Plugin.doingFullSync) {
+        // An upload can run on its own during a load, so it must not end the full sync early.
+        if (nsClientV3Plugin.doingFullSync && nsClientV3Plugin.fullSyncShouldEnd) {
             nsClientRepository.addLog("● RUN", "Full sync finished")
             nsClientV3Plugin.endFullSync()
         }

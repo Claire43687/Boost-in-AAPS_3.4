@@ -1,9 +1,11 @@
 package app.aaps.core.objects.extensions
 
 import app.aaps.core.data.model.ICfg
+import app.aaps.core.data.model.InsulinModel
 import app.aaps.core.utils.lenientDouble
 import app.aaps.core.utils.lenientLong
 import app.aaps.core.utils.lenientString
+import app.aaps.core.utils.lenientStringOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -15,6 +17,9 @@ fun ICfg.toJsonObject(): JsonObject = buildJsonObject {
     put("insulinPeakTime", insulinPeakTime)
     put("concentration", JsonPrimitive(concentration))
     put("insulinNickname", insulinNickname)
+    // Written only for a curve other than oref, so an oref insulin serialises exactly as before the field
+    // existed and a stored catalogue is not rewritten on upgrade. A reader without the field ignores the key.
+    if (model != InsulinModel.OREF) put("insulinModel", model.name)
 }
 
 /**
@@ -31,7 +36,9 @@ fun ICfg.Companion.fromJsonObject(json: JsonObject): ICfg {
         insulinLabel = json.lenientString("insulinLabel"),
         insulinEndTime = json.lenientLong("insulinEndTime"),
         insulinPeakTime = json.lenientLong("insulinPeakTime"),
-        concentration = json.lenientDouble("concentration", 1.0)
+        concentration = json.lenientDouble("concentration", 1.0),
+        // Missing in everything written before the field existed: oref.
+        model = InsulinModel.fromStored(json.lenientStringOrNull("insulinModel"))
     )
 
     icfg.insulinNickname = json.lenientString("insulinNickname")

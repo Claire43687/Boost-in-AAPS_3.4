@@ -125,7 +125,7 @@ class NsFrameHandlerTest : TestBaseWithProfile() {
 
         sut.onDataCreateUpdate(envelope("treatments", doc))
 
-        verify(nsIncomingDataProcessor).processTreatments(any(), eq(false), eq(false))
+        verify(nsIncomingDataProcessor).processTreatments(any(), eq(false), eq(false), eq(false))
     }
 
     @Test

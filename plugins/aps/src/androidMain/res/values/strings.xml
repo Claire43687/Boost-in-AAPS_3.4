@@ -114,4 +114,27 @@
     <string name="autoISF_settings_title">AutoISF settings</string>
     <string name="smb_delivery_settings_title">SMB delivery settings</string>
 
+    <!-- Boost 6.1.2 -->
+    <string name="openaps_boost">Boost</string>
+    <string name="description_boost">Boost based accelerated bolusing with dynamic ISF</string>
+    <string name="openaps_boost_v5">Boost</string>
+    <string name="description_boost_v5">Doses for meals without meal announcements. It watches for a meal, confirms it, doses for it and then winds down. Outside a meal it doses like oref1.</string>
+    <string name="boost_v1_smb_sizing_title">Boost base-engine SMB sizing</string>
+    <string name="boost_stepcount_settings_title">Step Count Settings</string>
+    <string name="boost_stepcount_settings_summary">Configure step-based activity and inactivity detection</string>
+    <string name="boost_dynisf_title">Dynamic ISF (TDD-based)</string>
+    <string name="boost_settings_default_aaps">Default AAPS Settings</string>
+    <string name="boost_settings_exercise">Exercise Settings</string>
+    <string name="boost_settings_safety">Safety Settings</string>
+    <string name="boost_night_mode_title">Night Mode</string>
+    <string name="boost_night_mode_smb_disabled">SMB disabled by Boost Night Mode</string>
+    <string name="boost_hc_grant_title">Grant Health Connect access</string>
+    <string name="boost_hc_grant_summary">Tap to request the Read Heart Rate permission. Until granted, AAPS does not appear in the Health Connect app list. After granting, the poll interval setting controls ingest cadence.</string>
+    <string name="boost_post_exercise_recovery_title">Post-Exercise Recovery</string>
+    <string name="boost_hr_integration_title">Heart Rate Integration</string>
+    <string name="boost_hr_integration_summary">Augment step-based exercise detection using heart rate data from a paired wearable</string>
+
+    <string name="boost_permission_activity_title">Physical activity</string>
+    <string name="boost_permission_activity_description">Boost reads the phone step counter to recognise exercise, inactivity and a morning lie-in.</string>
+    <string name="boost_history_insulin_assumed">Nightscout history will download shortly. Records that name no insulin take the insulin in use, or your only listed insulin, and are not changed later. Check that insulin is right before relying on past IOB.</string>
 </resources>

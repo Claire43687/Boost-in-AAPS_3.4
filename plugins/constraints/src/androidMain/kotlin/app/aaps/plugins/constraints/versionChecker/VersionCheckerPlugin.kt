@@ -14,7 +14,6 @@ import app.aaps.core.interfaces.plugin.PluginDescription
 import app.aaps.core.interfaces.resources.TextResolver
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.versionChecker.VersionCheckerUtils
-import app.aaps.core.keys.LongComposedKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.plugins.constraints.ConstraintsStrings
 import app.aaps.plugins.constraints.versionChecker.keys.VersionCheckerLongKey
@@ -50,10 +49,9 @@ class VersionCheckerPlugin(
 
     override suspend fun applyMaxIOBConstraints(maxIob: Constraint<Double>): Constraint<Double> {
         versionCheckerUtils.triggerCheckVersion()
-        val endDate = preferences.get(LongComposedKey.AppExpiration, config.VERSION_NAME)
-        return if (endDate != 0L && dateUtil.now() > endDate)
-            maxIob.set(0.0, rh.gs(ConstraintsStrings.application_expired), this)
-        else
-            maxIob
+        // Boost: the expired-version constraint is bypassed, as in Boost 6.1.2 on 3.4. Upstream sets
+        // max IOB to 0 once the build's expiry date passes, which would stop Boost dosing on a beta.
+        // The version check still runs and still notifies.
+        return maxIob
     }
 }

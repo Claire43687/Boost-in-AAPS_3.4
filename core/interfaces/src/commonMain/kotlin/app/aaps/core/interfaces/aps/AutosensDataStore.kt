@@ -9,12 +9,31 @@ import app.aaps.core.interfaces.utils.DateUtil
 
 interface AutosensDataStore {
 
-    /** Guards [bgReadings], [autosensDataTable] and [bucketedData]. Hold it across compound work. */
+    /** Guards [bgReadings], [autosensDataTable], [bucketedData] and [bucketedDataNative]. Hold it across compound work. */
     val dataLock: AapsLock
 
     var bgReadings: List<GV>
     var autosensDataTable: LongSparseArray<AutosensData>
     var bucketedData: MutableList<InMemoryGlucoseValue>?
+
+    /**
+     * The same glucose at the sensor's OWN cadence, rather than resampled to five minutes.
+     *
+     * [bucketedData] is built by stepping back in fixed five-minute increments and interpolating,
+     * so on a one-minute sensor four of every five readings are replaced by an interpolation of
+     * their neighbours. That is deliberate for the sensitivity chain, which defines deviations
+     * and carbohydrate impact per five-minute bucket and would be silently rescaled by a change
+     * of interval. Consumers that work in elapsed time rather than sample counts, the smoother
+     * and the delta calculation, can use this instead and see every reading.
+     *
+     * The same list as [bucketedData] on any feed slower than two minutes, which is every feed
+     * that is not a one-minute sensor. Null until [createBucketedData] runs.
+     */
+    var bucketedDataNative: MutableList<InMemoryGlucoseValue>?
+
+    /** Median spacing of the raw readings in minutes, or null when it cannot be established. */
+    var detectedCadenceMinutes: Double?
+
     var lastUsed5minCalculation: Boolean?
 
     /**
@@ -30,12 +49,32 @@ interface AutosensDataStore {
      * @return InMemoryGlucoseValue or null
      */
     fun actualBg(): InMemoryGlucoseValue?
+
+    /**
+     * Last NATIVE-cadence InMemoryGlucoseValue within the last 9 minutes, or null.
+     *
+     * [actualBg] reads the five-minute bucketed series, so on a faster sensor its timestamp only
+     * advances every five minutes. This accessor exists so the loop can be driven at the sensor's
+     * own cadence instead, and is used only where that is explicitly enabled
+     * (`ApsLoopAtNativeCadence`).
+     *
+     * On a five-minute feed the native series IS the bucketed series, so this returns exactly what
+     * [actualBg] does.
+     */
+    fun actualBgNative(): InMemoryGlucoseValue?
     fun lastDataTime(dateUtil: DateUtil): String
     fun clone(): AutosensDataStore
     fun getBgReadingsDataTableCopy(): List<GV>
     fun getLastAutosensData(reason: String, aapsLogger: AAPSLogger, dateUtil: DateUtil): AutosensData?
     fun getAutosensDataAtTime(fromTime: Long): AutosensData?
     fun getBucketedDataTableCopy(): MutableList<InMemoryGlucoseValue>?
+
+    /**
+     * Copy of [bucketedDataNative], which falls back to [bucketedData] when no distinct native
+     * series exists. For consumers that work in elapsed time and want every reading the sensor
+     * produced.
+     */
+    fun getBucketedDataNativeTableCopy(): MutableList<InMemoryGlucoseValue>?
     fun createBucketedData(aapsLogger: AAPSLogger, dateUtil: DateUtil)
     fun slowAbsorptionPercentage(timeInMinutes: Int): Double
     /**

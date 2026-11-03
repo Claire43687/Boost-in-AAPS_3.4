@@ -448,6 +448,23 @@ enum class IntKey(
         ),
         sync = SyncSpec(SyncChannel.Cold, SyncDirection.Bidirectional)
     ),
+
+    // Boost
+    ApsBoostInactivitySteps(key = "boost_inactivity_steps", defaultValue = 500, min = 0, max = 1000, title = KeysStrings.pref_title_boost_inactivity_steps, summary = KeysStrings.pref_summary_boost_inactivity_steps, defaultedBySM = true),
+    ApsBoostSleepInSteps(key = "boost_sleep_in_steps", defaultValue = 250, min = 0, max = 1000, title = KeysStrings.pref_title_boost_sleep_in_steps, summary = KeysStrings.pref_summary_boost_sleep_in_steps, defaultedBySM = true),
+    ApsBoostActivitySteps5(key = "boost_activity_steps_5", defaultValue = 420, min = 0, max = 5000, title = KeysStrings.pref_title_boost_activity_steps_5, summary = KeysStrings.pref_summary_boost_activity_steps5, defaultedBySM = true),
+    ApsBoostActivitySteps15(key = "boost_activity_steps_15", defaultValue = 800, min = 0, max = 10000, title = KeysStrings.pref_title_boost_activity_steps_15, summary = KeysStrings.pref_summary_boost_activity_steps15, defaultedBySM = true),
+    ApsBoostActivitySteps30(key = "boost_activity_steps_30", defaultValue = 1200, min = 0, max = 10000, title = KeysStrings.pref_title_boost_activity_steps_30, summary = KeysStrings.pref_summary_boost_activity_steps30, defaultedBySM = true),
+    ApsBoostActivitySteps60(key = "boost_activity_steps_60", defaultValue = 1800, min = 0, max = 10000, title = KeysStrings.pref_title_boost_activity_steps_60, summary = KeysStrings.pref_summary_boost_activity_steps60, defaultedBySM = true),
+    ApsBoostDynIsfAdjustmentFactor(key = "boost_DynISFAdjust", defaultValue = 100, min = 1, max = 300, title = KeysStrings.pref_title_boost_dynisf_adjustment, summary = KeysStrings.pref_summary_boost_dyn_isf_adjustment_factor, unitType = UnitType.PERCENT),
+    ApsBoostHrMaxBpm(key = "boost_hr_max_bpm", defaultValue = 180, min = 150, max = 220, title = KeysStrings.pref_title_boost_hr_max_bpm, summary = KeysStrings.pref_summary_boost_hr_max_bpm, defaultedBySM = true),
+    ApsBoostHrRestingBpm(key = "boost_hr_resting_bpm", defaultValue = 60, min = 30, max = 100, title = KeysStrings.pref_title_boost_hr_resting_bpm, summary = KeysStrings.pref_summary_boost_hr_resting_bpm, defaultedBySM = true),
+    ApsBoostHrWindowMinutes(key = "boost_hr_window_minutes", defaultValue = 15, min = 5, max = 60, title = KeysStrings.pref_title_boost_hr_window_minutes, summary = KeysStrings.pref_summary_boost_hr_window_minutes, defaultedBySM = true, unitType = UnitType.MIN),
+    ApsBoostPreSleepLeadMin(key = "boost_pre_sleep_lead_min", defaultValue = 60, min = 0, max = 180, title = KeysStrings.pref_title_boost_pre_sleep_lead_min, summary = KeysStrings.pref_summary_boost_pre_sleep_lead_min, defaultedBySM = true, unitType = UnitType.MIN),
+    ApsBoostSleepHysteresisMin(key = "boost_sleep_hysteresis_min", defaultValue = 10, min = 5, max = 30, title = KeysStrings.pref_title_boost_sleep_hysteresis_min, summary = KeysStrings.pref_summary_boost_sleep_hysteresis_min, defaultedBySM = true, unitType = UnitType.MIN),
+    ApsBoostWakeHrHysteresisMin(key = "boost_wake_hr_hysteresis_min", defaultValue = 5, min = 2, max = 15, title = KeysStrings.pref_title_boost_wake_hr_hysteresis_min, summary = KeysStrings.pref_summary_boost_wake_hr_hysteresis_min, defaultedBySM = true, unitType = UnitType.MIN),
+    ApsBoostHealthConnectPollMin(key = "boost_health_connect_poll_min", defaultValue = 5, min = 1, max = 30, title = KeysStrings.pref_title_boost_health_connect_poll_min, summary = KeysStrings.pref_summary_boost_health_connect_poll_min, defaultedBySM = true, unitType = UnitType.MIN),
+    ApsBoostPostExerciseMinDuration(key = "boost_post_exercise_min_duration", defaultValue = 10, min = 1, max = 120, title = KeysStrings.pref_title_boost_post_exercise_min_duration, summary = KeysStrings.pref_summary_boost_post_exercise_min_duration, defaultedBySM = true, unitType = UnitType.MIN),
     ;
 
     override val entries: Map<Int, TextRef> = entriesRefs

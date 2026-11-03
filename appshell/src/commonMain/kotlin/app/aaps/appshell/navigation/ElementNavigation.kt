@@ -68,6 +68,10 @@ class ElementNavigator(
             is NavigationRequest.PluginPreferences -> guarded(ElementType.SETTINGS.protection) {
                 navController.navigate(AppRoute.PluginPreferences.createRoute(request.pluginKey))
             }
+
+            // Not protected, like the main overview it stands in for. Every action on the screen
+            // goes back through handleNavigationRequest and is checked there.
+            NavigationRequest.BoostOverview        -> navController.navigate(AppRoute.BoostV2Overview.route)
         }
     }
 

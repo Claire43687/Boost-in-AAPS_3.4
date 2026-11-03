@@ -2,6 +2,7 @@ package app.aaps.plugins.sync.nsclientV3.extensions
 
 import app.aaps.core.data.model.ICfg
 import app.aaps.core.data.model.IDs
+import app.aaps.core.data.model.InsulinModel
 import app.aaps.core.data.model.PS
 import app.aaps.core.data.pump.defs.PumpType
 import app.aaps.core.data.time.T
@@ -24,7 +25,7 @@ fun NSProfileSwitch.toProfileSwitch(profileRepository: ProfileRepository, dateUt
     val profileSealed = ProfileSealed.Pure(value = pureProfile, activePlugin = null)
     val iCfg =
         iCfg?.let {
-            ICfg(insulinLabel = it.insulinLabel, insulinEndTime = it.insulinEndTime, insulinPeakTime = it.insulinPeakTime, concentration = it.concentration)
+            ICfg(insulinLabel = it.insulinLabel, insulinEndTime = it.insulinEndTime, insulinPeakTime = it.insulinPeakTime, concentration = it.concentration, model = InsulinModel.fromStored(it.insulinModel))
         } ?: insulinFallback
 
 
@@ -73,6 +74,6 @@ fun PS.toNSProfileSwitch(dateUtil: DateUtil, decimalFormatter: DecimalFormatter)
         pumpType = ids.pumpType?.name,
         pumpSerial = ids.pumpSerial,
         endId = ids.endId,
-        iCfg = NSICfg(insulinLabel = iCfg.insulinLabel, insulinEndTime = iCfg.insulinEndTime, insulinPeakTime = iCfg.insulinPeakTime, concentration = iCfg.concentration)
+        iCfg = NSICfg(insulinLabel = iCfg.insulinLabel, insulinEndTime = iCfg.insulinEndTime, insulinPeakTime = iCfg.insulinPeakTime, concentration = iCfg.concentration, insulinModel = iCfg.model.toNsInsulinModel())
     )
 }

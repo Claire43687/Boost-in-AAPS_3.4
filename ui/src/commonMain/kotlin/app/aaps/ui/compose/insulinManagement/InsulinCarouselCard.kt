@@ -23,11 +23,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.aaps.core.data.model.ICfg
+import app.aaps.core.data.model.InsulinModel
 import app.aaps.core.interfaces.InterfacesStrings
 import app.aaps.core.interfaces.insulin.ConcentrationType
 import app.aaps.core.ui.CoreUiStrings
 import app.aaps.core.ui.compose.AapsTheme
 import app.aaps.core.ui.compose.stringResource
+import app.aaps.ui.UiStrings
 
 /**
  * Carousel card displaying an insulin configuration.
@@ -95,6 +97,15 @@ fun InsulinCarouselCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = contentColor,
                     modifier = Modifier.semantics { contentDescription = diaSpoken }
+                )
+            }
+
+            // The curve, when it is not the oref one that peak and DIA describe.
+            if (iCfg.model == InsulinModel.LYUMJEV_PD) {
+                Text(
+                    text = stringResource(UiStrings.insulin_lyumjev_pd_nickname),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = contentColor
                 )
             }
 

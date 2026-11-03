@@ -7,6 +7,7 @@ import app.aaps.core.data.model.ICfg
 import app.aaps.core.data.model.TE
 import app.aaps.core.data.time.T
 import app.aaps.core.interfaces.configuration.Config
+import app.aaps.core.interfaces.insulin.InsulinManager
 import app.aaps.core.interfaces.insulin.InsulinType
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
@@ -73,7 +74,8 @@ class NsIncomingDataProcessor(
     private val config: Config,
     private val profileStoreProvider: () -> ProfileStore,
     private val notificationManager: NotificationManager,
-    private val nsClientRepository: NSClientRepository
+    private val nsClientRepository: NSClientRepository,
+    private val insulinManager: InsulinManager
 ) {
 
     /**
@@ -88,8 +90,12 @@ class NsIncomingDataProcessor(
      * profile switches that would establish it are arriving in this same batch); it matches what a fresh
      * install seeds. Read per record, not hoisted, so records later in a batch pick up a profile switch that
      * landed earlier in it.
+     *
+     * A single catalogue entry comes first when nothing is in force: after a settings import it is the user's
+     * insulin, and the first switch in the batch would otherwise make rapid-acting the running one.
      */
-    private fun fallbackICfg(): ICfg = profileFunction.runningICfg.value ?: InsulinType.OREF_RAPID_ACTING.iCfg
+    private fun fallbackICfg(): ICfg =
+        profileFunction.runningICfg.value ?: insulinManager.insulins.singleOrNull()?.takeIf { it.isUsable } ?: InsulinType.OREF_RAPID_ACTING.iCfg
 
     /**
      * Whether BG from Nightscout is taken: when Nightscout is the BG source, when the user accepts CGM data
@@ -169,7 +175,7 @@ class NsIncomingDataProcessor(
      *
      * @return true if there was an accepted treatment
      */
-    fun processTreatments(treatments: List<NSTreatment>, doFullSync: Boolean, advanceInitialLoadCursor: Boolean = false): Boolean {
+    fun processTreatments(treatments: List<NSTreatment>, doFullSync: Boolean, advanceInitialLoadCursor: Boolean = false, historyBackfill: Boolean = false): Boolean {
         try {
             var latestDateInReceivedData: Long = 0
             for (treatment in treatments) {
@@ -243,8 +249,10 @@ class NsIncomingDataProcessor(
                                     )
                             }
 
+                    // Not from a backfill the person did not ask for: another phone's closed loop row, with no
+                    // row here to outrank it, would switch this install's loop on.
                     is NSOfflineEvent           ->
-                        if (preferences.get(BooleanKey.NsClientAcceptRunningMode) || config.AAPSCLIENT || doFullSync)
+                        if (preferences.get(BooleanKey.NsClientAcceptRunningMode) || config.AAPSCLIENT || (doFullSync && !historyBackfill))
                             treatment.toRunningMode().let { runningMode ->
                                 storeDataForDb.addToRunningModes(runningMode)
                             }

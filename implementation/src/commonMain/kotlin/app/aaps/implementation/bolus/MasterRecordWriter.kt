@@ -32,6 +32,8 @@ import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.resources.TextResolver
 import app.aaps.core.interfaces.source.XDripSource
 import app.aaps.core.interfaces.sync.XDripBroadcast
+import app.aaps.core.interfaces.rx.bus.RxBus
+import app.aaps.core.interfaces.rx.events.EventCalibrationDetected
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.DecimalFormatter
 import app.aaps.core.interfaces.utils.Translator
@@ -65,7 +67,8 @@ class MasterRecordWriter(
     private val uel: UserEntryLogger,
     private val xDripSource: XDripSource,
     private val xDripBroadcast: XDripBroadcast,
-    private val aapsLogger: AAPSLogger
+    private val aapsLogger: AAPSLogger,
+    private val rxBus: RxBus
 ) {
 
     /** A record found in this database, ready to describe and to remove. */
@@ -377,6 +380,9 @@ class MasterRecordWriter(
                 uel.log(action = Action.CALIBRATION, source = source, value = value)
                 // xDrip, when it is the BG source here, calibrates its own readings too.
                 if (xDripSource.isEnabled()) xDripBroadcast.sendCalibration(profileUtil.fromMgdlToUnits(calibration.glucoseMgdl))
+                // Boost holds back aggressive dosing for a while after a calibration, since CGM readings can
+                // step as the sensor re-anchors.
+                rxBus.send(EventCalibrationDetected())
             }
 
             is AddEntryResult.Rejected -> {

@@ -32,6 +32,7 @@ import app.aaps.core.interfaces.sync.DataSyncSelector
 import app.aaps.core.interfaces.sync.NsClient
 import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.core.keys.BooleanKey
+import app.aaps.core.keys.StringKey
 import app.aaps.core.keys.StringNonKey
 import app.aaps.core.nssdk.interfaces.NSAndroidClient
 import app.aaps.core.nssdk.localmodel.clientcontrol.AuthorizedClient
@@ -41,6 +42,8 @@ import app.aaps.core.nssdk.remotemodel.LastModified
 import app.aaps.plugins.sync.SyncStringsValues
 import app.aaps.plugins.sync.nsclientV3.clientcontrol.AuthorizedClientsRepository
 import app.aaps.plugins.sync.nsclientV3.clientcontrol.OrphanDetector
+import app.aaps.plugins.sync.nsclientV3.keys.NsclientBooleanKey
+import app.aaps.plugins.sync.nsclientV3.keys.NsclientLongKey
 import app.aaps.plugins.sync.nsclientV3.keys.NsclientStringKey
 import app.aaps.plugins.sync.nsclientV3.ws.NsConnection
 import app.aaps.plugins.sync.nsclientV3.ws.NsLoadExecutor
@@ -780,6 +783,180 @@ internal class NSClientV3PluginTest : TestBaseWithProfile() {
         // 2. Verify that the empty state was written to preferences to make the reset persistent.
         verify(preferences).put(NsclientStringKey.V3LastModified, expectedEmptyLastModifiedJson)
         verify(dataSyncSelectorV3).resetToNextFullSync()
+    }
+
+    // ── bounded history backfill ─────────────────────────────────────────────────────
+    // Download-only, time-bounded sibling of resetToFullSync, used by Boost to close an install-time
+    // history gap (a cross-fork migration onto a fresh database) without importing 100 days.
+
+    @Test
+    fun `firstLoadFloor is the 100 day ceiling until a bounded backfill raises it`() {
+        val now = 1_785_000_000_000L
+        whenever(dateUtil.now()).thenReturn(now)
+
+        whenever(preferences.get(NsclientLongKey.HistoryBackfillFrom)).thenReturn(0L)
+        assertThat(sut.firstLoadFloor()).isEqualTo(now - sut.maxAge)
+
+        val fourteenDaysAgo = now - T.days(14).msecs()
+        whenever(preferences.get(NsclientLongKey.HistoryBackfillFrom)).thenReturn(fourteenDaysAgo)
+        assertThat(sut.firstLoadFloor()).isEqualTo(fourteenDaysAgo)
+
+        // A request can only ever NARROW the window: the floor is a max, so a bound older than the
+        // client's own 100-day ceiling is ignored rather than widening the fetch.
+        whenever(preferences.get(NsclientLongKey.HistoryBackfillFrom)).thenReturn(now - T.days(500).msecs())
+        assertThat(sut.firstLoadFloor()).isEqualTo(now - sut.maxAge)
+    }
+
+    @Test
+    fun `resetToFullSync drops a stale backfill floor so a manual full sync is not clamped`() = runTest {
+        sut.resetToFullSync()
+        verify(preferences).put(NsclientLongKey.HistoryBackfillFrom, 0L)
+    }
+
+    @Test
+    fun `a full sync that never finishes loading ends after six hours`() {
+        val start = 1_785_000_000_000L
+        whenever(dateUtil.now()).thenReturn(start)
+        sut.fullSyncRequested.store(true)
+        sut.beginRound()
+        sut.initialLoadFinished = false
+        assertThat(sut.fullSyncShouldEnd).isFalse()
+        whenever(dateUtil.now()).thenReturn(start + T.hours(6).msecs())
+        assertThat(sut.fullSyncShouldEnd).isTrue()
+    }
+
+    @Test
+    fun `the backfill is active from its bound until the chain ends`() {
+        assertThat(sut.historyBackfillActive).isFalse()
+        sut.pendingBackfillFrom.store(1_700_000_000_000L)
+        assertThat(sut.historyBackfillActive).isTrue()
+        sut.pendingBackfillFrom.store(0L)
+        assertThat(sut.historyBackfillActive).isFalse()
+    }
+
+    @Test
+    fun `endFullSync clears the backfill floor once the whole loader chain has completed`() {
+        sut.endFullSync()
+        assertThat(sut.doingFullSync).isFalse()
+        verify(preferences).put(NsclientLongKey.HistoryBackfillFrom, 0L)
+    }
+
+    @Test
+    fun `requestHistoryBackfill declines - and mutates nothing - when the plugin is not running`() {
+        // The plugin is not enabled in this fixture, and the URL is blank as well.
+        whenever(preferences.get(StringKey.NsClientUrl)).thenReturn("")
+        sut.lastLoadedSrvModified = LastModified(LastModified.Collections().apply { entries = 111L; treatments = 222L })
+
+        assertThat(sut.requestHistoryBackfill(1_785_000_000_000L - T.days(14).msecs())).isFalse()
+
+        // Cursors untouched: a declined request must not leave the client half-rewound.
+        assertThat(sut.lastLoadedSrvModified.collections.entries).isEqualTo(111L)
+        assertThat(sut.lastLoadedSrvModified.collections.treatments).isEqualTo(222L)
+        assertThat(sut.fullSyncRequested.load()).isFalse()
+        assertThat(sut.pendingBackfillFrom.load()).isEqualTo(0L)
+    }
+
+    @Test
+    fun `requestHistoryBackfill declines when NSClient is paused`() {
+        acceptingBackfill()
+        whenever(preferences.get(NsclientBooleanKey.NsPaused)).thenReturn(true)
+
+        assertThat(sut.requestHistoryBackfill(1_785_000_000_000L - T.days(14).msecs())).isFalse()
+        assertThat(sut.fullSyncRequested.load()).isFalse()
+    }
+
+    // the rewind used to be applied at request time, so a round already in flight with
+    // doingFullSync false consumed it under the accept preferences, and the full-sync flag was then
+    // spent on a round with nothing left to fetch. The rewind now waits for the round that carries it.
+
+    // receiverDelegate.allowed is false in this fixture, so the executeLoop the request launches
+    // returns before it reaches beginRound and cannot race the assertions below.
+    private fun acceptingBackfill() {
+        val lastModified = Json.encodeToString(LastModified.serializer(), LastModified(LastModified.Collections()))
+        whenever(preferences.get(NsclientStringKey.V3LastModified)).thenReturn(lastModified)
+        whenever(preferences.get(NsclientBooleanKey.NsPaused)).thenReturn(false)
+        whenever(preferences.get(StringKey.NsClientUrl)).thenReturn("https://ns.example")
+        // status reads it while the plugin starts, and it must not be null there.
+        whenever(receiverDelegate.blockingReason).thenReturn("Block")
+        sut.setPluginEnabledBlocking(PluginType.SYNC, true)
+    }
+
+    @Test
+    fun `requestHistoryBackfill leaves the cursors alone until the next round starts`() {
+        val now = 1_785_000_000_000L
+        whenever(dateUtil.now()).thenReturn(now)
+        acceptingBackfill()
+        sut.lastLoadedSrvModified = LastModified(LastModified.Collections().apply { entries = 111L; treatments = 222L })
+
+        assertThat(sut.requestHistoryBackfill(now - T.days(14).msecs())).isTrue()
+
+        // A round in flight reads these cursors; they must not move under it.
+        assertThat(sut.lastLoadedSrvModified.collections.entries).isEqualTo(111L)
+        assertThat(sut.lastLoadedSrvModified.collections.treatments).isEqualTo(222L)
+        assertThat(sut.doingFullSync).isFalse()
+        assertThat(sut.fullSyncRequested.load()).isTrue()
+        assertThat(sut.pendingBackfillFrom.load()).isEqualTo(now - T.days(14).msecs())
+        verify(preferences, never()).put(NsclientLongKey.HistoryBackfillFrom, now - T.days(14).msecs())
+    }
+
+    @Test
+    fun `requestHistoryBackfill clamps a bound older than the 100 day ceiling`() {
+        val now = 1_785_000_000_000L
+        whenever(dateUtil.now()).thenReturn(now)
+        acceptingBackfill()
+
+        assertThat(sut.requestHistoryBackfill(now - T.days(500).msecs())).isTrue()
+        assertThat(sut.pendingBackfillFrom.load()).isEqualTo(now - sut.maxAge)
+    }
+
+    @Test
+    fun `the round that starts after a backfill request carries both the rewind and the full-sync flag`() {
+        val now = 1_785_000_000_000L
+        val from = now - T.days(14).msecs()
+        whenever(dateUtil.now()).thenReturn(now)
+        acceptingBackfill()
+        sut.lastLoadedSrvModified = LastModified(LastModified.Collections().apply { entries = 111L; treatments = 222L; foods = 333L })
+        sut.initialLoadFinished = true
+        sut.requestHistoryBackfill(from)
+
+        sut.beginRound()
+
+        assertThat(sut.doingFullSync).isTrue()
+        assertThat(sut.fullSyncRequested.load()).isFalse()
+        assertThat(sut.pendingBackfillFrom.load()).isEqualTo(0L)
+        assertThat(sut.lastLoadedSrvModified.collections.entries).isEqualTo(0L)
+        assertThat(sut.lastLoadedSrvModified.collections.treatments).isEqualTo(0L)
+        // Only the two download cursors are rewound.
+        assertThat(sut.lastLoadedSrvModified.collections.foods).isEqualTo(333L)
+        assertThat(sut.firstLoadContinueTimestamp.collections.entries).isEqualTo(from)
+        assertThat(sut.firstLoadContinueTimestamp.collections.treatments).isEqualTo(from)
+        assertThat(sut.initialLoadFinished).isFalse()
+        verify(preferences).put(NsclientLongKey.HistoryBackfillFrom, from)
+        // Download only: the upload state is never touched.
+        runBlocking { verify(dataSyncSelectorV3, never()).resetToNextFullSync() }
+    }
+
+    @Test
+    fun `a round with no full sync requested neither rewinds nor sets the flag`() {
+        sut.lastLoadedSrvModified = LastModified(LastModified.Collections().apply { entries = 111L; treatments = 222L })
+        sut.beginRound()
+        assertThat(sut.doingFullSync).isFalse()
+        assertThat(sut.lastLoadedSrvModified.collections.treatments).isEqualTo(222L)
+    }
+
+    @Test
+    fun `resetToFullSync drops a pending backfill so a manual full sync stays unbounded`() = runTest {
+        val now = 1_785_000_000_000L
+        whenever(dateUtil.now()).thenReturn(now)
+        acceptingBackfill()
+        sut.requestHistoryBackfill(now - T.days(14).msecs())
+
+        sut.resetToFullSync()
+        sut.beginRound()
+
+        assertThat(sut.pendingBackfillFrom.load()).isEqualTo(0L)
+        assertThat(sut.doingFullSync).isTrue()
+        verify(preferences, never()).put(NsclientLongKey.HistoryBackfillFrom, now - T.days(14).msecs())
     }
 
     @Test

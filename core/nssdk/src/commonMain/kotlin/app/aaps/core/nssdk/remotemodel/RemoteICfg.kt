@@ -17,5 +17,11 @@ data class RemoteICfg(
     @SerialName("insulinLabel") val insulinLabel: String = "",
     @SerialName("insulinEndTime") val insulinEndTime: Long = 0,
     @SerialName("insulinPeakTime") val insulinPeakTime: Long = 0,
-    @SerialName("concentration") val concentration: Double = 0.0
+    @SerialName("concentration") val concentration: Double = 0.0,
+    /**
+     * Curve model name (`InsulinModel`). Null for oref: with `explicitNulls = false` the key is then left out,
+     * so an oref document is exactly what it was before the field existed. A missing key reads as oref, and an
+     * older reader ignores the key (`ignoreUnknownKeys`).
+     */
+    @SerialName("insulinModel") val insulinModel: String? = null
 )

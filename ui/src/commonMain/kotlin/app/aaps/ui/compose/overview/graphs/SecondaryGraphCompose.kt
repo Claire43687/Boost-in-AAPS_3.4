@@ -1112,7 +1112,7 @@ fun rememberCobLineStyles(): CobLineStyles {
 // =========================================================================
 
 /** Formats bolus amount: 1.0->"1", 1.2->"1.2", 0.8->".8" (drop leading zero) */
-private fun formatBolusLabel(value: Double, decimalFormatter: DecimalFormatter): String {
+internal fun formatBolusLabel(value: Double, decimalFormatter: DecimalFormatter): String {
     if (value == 0.0) return ""
     val formatted = decimalFormatter.to2Decimal(value).trimEnd('0').trimEnd('.').trimEnd(',')
     return if (formatted.startsWith("0.")) formatted.substring(1) else formatted

@@ -13,6 +13,8 @@ import app.aaps.core.interfaces.calibration.AddEntryResult
 import app.aaps.core.interfaces.calibration.Calibration
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.logging.UserEntryLogger
+import app.aaps.core.interfaces.rx.bus.RxBus
+import app.aaps.core.interfaces.rx.events.EventCalibrationDetected
 import app.aaps.core.interfaces.source.XDripSource
 import app.aaps.core.interfaces.sync.XDripBroadcast
 import app.aaps.core.interfaces.utils.Translator
@@ -43,6 +45,7 @@ class MasterRecordWriterTest : TestBaseWithProfile() {
     @Mock lateinit var xDripSource: XDripSource
     @Mock lateinit var xDripBroadcast: XDripBroadcast
     @Mock lateinit var calibration: Calibration
+    @Mock lateinit var calibrationBus: RxBus
 
     private lateinit var sut: MasterRecordWriter
 
@@ -51,7 +54,7 @@ class MasterRecordWriterTest : TestBaseWithProfile() {
         whenever(activePlugin.activeCalibration).thenReturn(calibration)
         sut = MasterRecordWriter(
             persistenceLayer, baseText, dateUtil, profileUtil, profileFunction, decimalFormatter, translator, activePlugin,
-            uel, xDripSource, xDripBroadcast, aapsLogger
+            uel, xDripSource, xDripBroadcast, aapsLogger, calibrationBus
         )
     }
 
@@ -146,6 +149,18 @@ class MasterRecordWriterTest : TestBaseWithProfile() {
         sut.removeStartEvents(Sources.NSClient)
 
         verify(persistenceLayer).invalidateTherapyEventsWithNote(baseText.gs(CoreUiStrings.androidaps_start), Action.RESTART_EVENTS_REMOVED, Sources.NSClient)
+    }
+
+    // Boost's 15-minute SMB block after a calibration hangs on this event, and 4.0.0 moved the store here from the dialog.
+    @Test
+    fun `an accepted calibration tells the Boost engine and a refused one does not`() = runTest {
+        whenever(calibration.addEntry(any(), any())).thenReturn(AddEntryResult.Accepted)
+        sut.addCalibration(BatchAction.Calibration(100.0), Sources.CalibrationDialog) {}
+        verify(calibrationBus).send(any<EventCalibrationDetected>())
+
+        whenever(calibration.addEntry(any(), any())).thenReturn(AddEntryResult.Rejected.NoSensorPair)
+        sut.addCalibration(BatchAction.Calibration(100.0), Sources.CalibrationDialog) {}
+        verify(calibrationBus).send(any<EventCalibrationDetected>()) // still the one send
     }
 
     @Test

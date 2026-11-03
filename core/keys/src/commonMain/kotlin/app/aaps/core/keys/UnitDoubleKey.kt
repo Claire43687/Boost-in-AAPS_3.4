@@ -32,7 +32,13 @@ enum class UnitDoubleKey(
         defaultedBySM = true,
         dependency = BooleanKey.ApsUseDynamicSensitivity,
         sync = SyncSpec(SyncChannel.Cold, SyncDirection.Bidirectional)
-    )
+    ),
+
+    // Boost
+    ApsBoostDynIsfBgCap(key = "boost_dynisf_bg_cap", defaultValue = 210.0, minMgdl = 100, maxMgdl = 300, title = KeysStrings.pref_title_boost_dynisf_bg_cap, summary = KeysStrings.pref_summary_boost_dyn_isf_bg_cap, defaultedBySM = true),
+    ApsBoostDynIsfNormalTarget(key = "boost_dynisf_normal_target", defaultValue = 99.0, minMgdl = 70, maxMgdl = 120, title = KeysStrings.pref_title_boost_dynisf_normal_target, summary = KeysStrings.pref_summary_boost_dyn_isf_normal_target, defaultedBySM = true),
+    ApsBoostNightModeBgOffset(key = "boost_night_mode_bg_offset", defaultValue = 27.0, minMgdl = 0, maxMgdl = 90, title = KeysStrings.pref_title_boost_night_mode_bg_offset, summary = KeysStrings.pref_summary_boost_night_mode_bg_offset, defaultedBySM = true),
+    ApsBoostPostExerciseRecoveryTarget(key = "boost_post_exercise_recovery_target", defaultValue = 144.0, minMgdl = 90, maxMgdl = 200, title = KeysStrings.pref_title_boost_post_exercise_recovery_target, summary = KeysStrings.pref_summary_boost_post_exercise_recovery_target, defaultedBySM = true),
     ;
 
 }

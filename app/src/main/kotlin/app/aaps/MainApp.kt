@@ -771,11 +771,15 @@ class MainApp : Application(), MetroMemberInjector, MetroViewModelFactoryOwner, 
         // The record, not profileFunction.getProfile(): this runs before app init completes, and no profile
         // is handed out until then. getRunningOrRequestedICfg() rejects an unusable iCfg, so a running row
         // that still carries the sentinel falls through instead of writing the sentinel back over itself.
+        val recordICfg = profileFunction.getRunningOrRequestedICfg()
         val plan = insulinMigration.plan(
-            recordICfg = profileFunction.getRunningOrRequestedICfg(),
+            recordICfg = recordICfg,
             legacy = legacyInsulin,
             harvest = profileDia,
-            activeProfileName = persistenceLayer.getEffectiveProfileSwitchActiveAt(dateUtil.now())?.originalProfileName
+            activeProfileName = persistenceLayer.getEffectiveProfileSwitchActiveAt(dateUtil.now())?.originalProfileName,
+            // 3.4 never stamped a bolus, and the stamp below consumes the sentinel, so unstamped boluses mean this
+            // is the start that moves from 3.4.
+            upgradingFrom3x = repository.countBolusesAwaitingInsulinConfig() > 0
         )
         // Puts it in the catalogue and gives back the stored copy, whose label the records are stamped with.
         // On a v3 install this REPLACES the default the first load invented, so the user does not come out
@@ -801,13 +805,21 @@ class MainApp : Application(), MetroMemberInjector, MetroViewModelFactoryOwner, 
         val conc = runningICfg.concentration
 
         config.updateInitProgress(rh.gs(R.string.migrating_profile_switches))
-        val migratedPs = repository.bulkMigrateProfileSwitchInsulinConfig(label, end, peak, conc)
+        val migratedPs = repository.bulkMigrateProfileSwitchInsulinConfig(label, end, peak, conc, runningICfg.model.name)
 
         config.updateInitProgress(rh.gs(R.string.migrating_effective_profile_switches))
-        val migratedEps = repository.bulkMigrateEffectiveProfileSwitchInsulinConfig(label, end, peak, conc)
+        val migratedEps = repository.bulkMigrateEffectiveProfileSwitchInsulinConfig(label, end, peak, conc, runningICfg.model.name)
 
         config.updateInitProgress(rh.gs(R.string.migrating_boluses))
-        val migratedBoluses = repository.bulkMigrateBolusInsulinConfig(label, end, peak, conc)
+        val migratedBoluses = repository.bulkMigrateBolusInsulinConfig(label, end, peak, conc, runningICfg.model.name)
+
+        // Not on a client: the master owns the switch, and a client's would be uploaded nowhere and reach no pump.
+        if (!config.AAPSCLIENT && plan.runningRecordNeedsSwitch(recordICfg) && !profileFunction.createProfileSwitchWithNewInsulin(runningICfg, Sources.Aaps))
+            notificationManager.post(
+                id = NotificationId.INSULIN_MIGRATION_DEFAULT_USED,
+                rh.gs(R.string.insulin_migration_pd_switch_refused, runningICfg.insulinLabel),
+                level = NotificationLevel.IMPORTANT
+            )
 
         val totalMigrated = migratedPs + migratedEps + migratedBoluses
         if (totalMigrated > 0) {

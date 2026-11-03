@@ -24,6 +24,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.core.app.ActivityCompat
@@ -37,6 +39,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.navigation.NavController
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
 import app.aaps.appshell.AapsAppRoot
 import app.aaps.appshell.navigation.AppRoute
 import app.aaps.appshell.navigation.ElementNavigator
@@ -108,6 +111,9 @@ import app.aaps.ui.compose.main.OverviewScreen
 import app.aaps.ui.compose.maintenance.ImportViewModel
 import app.aaps.ui.compose.maintenance.MaintenanceViewModel
 import app.aaps.ui.compose.manageSheet.ManageViewModel
+import app.aaps.ui.compose.overview.boost.BoostOverviewHost
+import app.aaps.ui.compose.overview.boost.boostPanelPlugins
+import app.aaps.ui.compose.overview.boost.BoostV2ViewModel
 import app.aaps.ui.compose.overview.chips.ChipsViewModel
 import app.aaps.ui.compose.overview.graphs.GraphViewModel
 import app.aaps.ui.compose.overview.statusLights.StatusViewModel
@@ -129,12 +135,14 @@ import app.aaps.ui.compose.treatmentsSheet.TreatmentViewModel
 import app.aaps.ui.search.BuiltInSearchables
 import app.aaps.ui.search.SearchIndexEntry
 import app.aaps.ui.search.SearchViewModel
+import app.aaps.ui.widget.BoostWidget
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import dev.zacsweers.metro.Inject
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import app.aaps.core.ui.R as CoreUiR
+import app.aaps.core.ui.search.SearchableItem
 
 class ComposeMainActivity : MetroAppCompatActivity() {
 
@@ -175,6 +183,7 @@ class ComposeMainActivity : MetroAppCompatActivity() {
     @Inject lateinit var objectives: Objectives
     @Inject lateinit var graphViewModelFactory: GraphViewModel.Factory
     @Inject lateinit var chipsViewModelFactory: ChipsViewModel.Factory
+    @Inject lateinit var boostV2ViewModelFactory: BoostV2ViewModel.Factory
     @Inject lateinit var overviewDataCache: OverviewDataCache
 
     private var accessTree: ActivityResultLauncher<Uri?>? = null
@@ -211,6 +220,10 @@ class ComposeMainActivity : MetroAppCompatActivity() {
     private val chipsViewModel: ChipsViewModel by viewModels {
         viewModelFactory { initializer { chipsViewModelFactory.create(overviewDataCache) } }
     }
+    // The Boost V2 overview reads the same live cache as the graph and chips view models.
+    private val boostV2ViewModel: BoostV2ViewModel by viewModels {
+        viewModelFactory { initializer { boostV2ViewModelFactory.create(overviewDataCache) } }
+    }
     private val treatmentsViewModel: TreatmentsViewModel by viewModels()
     private val insulinManagementViewModel: InsulinManagementViewModel by viewModels()
     private val tempTargetManagementViewModel: TempTargetManagementViewModel by viewModels()
@@ -231,6 +244,9 @@ class ComposeMainActivity : MetroAppCompatActivity() {
     }
     private var navController: NavHostController? = null
     private val _autoShowNotifications = mutableStateOf(false)
+
+    // Set by a tap on the Boost home-screen widget; AppContent navigates once the graph exists.
+    private val _openBoostOverview = mutableStateOf(false)
     private val disposable = CompositeDisposable()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -296,6 +312,10 @@ class ComposeMainActivity : MetroAppCompatActivity() {
 
         observePreferences()
 
+        // Only on a fresh start: a recreate (language change, rotation) keeps the launch intent and
+        // would otherwise jump back to the Boost overview.
+        if (savedInstanceState == null) handleWidgetIntent(intent)
+
         setContent {
             MainContent()
         }
@@ -355,6 +375,26 @@ class ComposeMainActivity : MetroAppCompatActivity() {
     private fun AppContent(navController: NavHostController) {
         // Trigger initial refresh when app content first appears (after init completes)
         LaunchedEffect(Unit) { refreshOnResume() }
+
+        // Boost: with "Open the Boost overview at start" on, the Boost V2 overview opens over the main
+        // screen once per launch, as 6.1.2's setting replaced the Overview tab. rememberSaveable keeps a
+        // rotation or a return from the background from opening it again after the user went back.
+        var boostOverviewOpenedAtStart by rememberSaveable { mutableStateOf(false) }
+        LaunchedEffect(Unit) {
+            if (!boostOverviewOpenedAtStart && preferences.get(BooleanKey.OverviewUseBoostOverviewV2) &&
+                navController.currentDestination?.route == AppRoute.Main.route
+            ) navController.navigate(AppRoute.BoostV2Overview.route) { launchSingleTop = true }
+            boostOverviewOpenedAtStart = true
+        }
+
+        // Boost widget tap: open the Boost V2 overview over the main screen.
+        val openBoostOverview by _openBoostOverview
+        LaunchedEffect(openBoostOverview) {
+            if (openBoostOverview) {
+                navController.navigate(AppRoute.BoostV2Overview.route) { launchSingleTop = true }
+                _openBoostOverview.value = false
+            }
+        }
 
         // Track last navigated route as a Crashlytics custom key for crash reports
         DisposableEffect(navController) {
@@ -583,6 +623,41 @@ class ComposeMainActivity : MetroAppCompatActivity() {
                     )
                 },
             )
+
+            // The Boost V2 overview is Android only, so its route is added here rather than in the
+            // shared appNavGraph. It uses this activity's view models, the same ones the main
+            // overview holds, and the same navigator for every action it offers.
+            composable(AppRoute.BoostV2Overview.route) {
+                val onBoostNavigate: (NavigationRequest) -> Unit = { request ->
+                    // These two are sheets of the main overview, which is not composed under this screen.
+                    if (request is NavigationRequest.Element && (request.type == ElementType.MAINTENANCE || request.type == ElementType.ABOUT))
+                        navController.popBackStack(AppRoute.Main.route, inclusive = false)
+                    handleNavigationRequest(request, navController)
+                }
+                BoostOverviewHost(
+                    boostViewModel = boostV2ViewModel,
+                    graphViewModel = graphViewModel,
+                    mainViewModel = mainViewModel,
+                    treatmentViewModel = treatmentViewModel,
+                    loopActionViewModel = loopActionViewModel,
+                    scenesViewModel = scenesViewModel,
+                    manageViewModel = manageViewModel,
+                    searchViewModel = searchViewModel,
+                    // Back from the configuration screen recomposes this destination, so a change shows.
+                    panelPlugins = remember { boostPanelPlugins(activePlugin.getPluginsList()) },
+                    notificationManager = notificationManager,
+                    pumpCommunicationStatus = pumpCommunicationStatus,
+                    onActionsError = { comment, title -> uiInteraction.runAlarm(comment, title, AlarmSound.BOLUS_ERROR) },
+                    onNavigate = onBoostNavigate,
+                    onSearchResultClick = { entry ->
+                        val item = entry.item
+                        if (item is SearchableItem.Dialog) onBoostNavigate(NavigationRequest.Element(item.elementType))
+                        else handleSearchResultClick(entry, navController)
+                    },
+                    onBoostDetails = { activePlugin.activeAPS?.let { aps -> aps::class.simpleName }?.let { handleNavigationRequest(NavigationRequest.Plugin(it), navController) } },
+                    onNotificationActionClick = { notification -> handleNotificationAction(notification.id, navController) }
+                )
+            }
         }
     }
 
@@ -623,6 +698,15 @@ class ComposeMainActivity : MetroAppCompatActivity() {
 
     private fun updateButtons() {
         permissionsViewModel.refresh()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleWidgetIntent(intent)
+    }
+
+    private fun handleWidgetIntent(intent: Intent?) {
+        if (intent?.action == BoostWidget.ACTION_OPEN_BOOST_OVERVIEW) _openBoostOverview.value = true
     }
 
     override fun onSaveInstanceState(outState: Bundle) {

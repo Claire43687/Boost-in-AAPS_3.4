@@ -40,6 +40,7 @@ import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 import kotlin.time.Clock
 
@@ -127,8 +128,15 @@ class UnscentedKalmanFilterPlugin(
     private val rMax = 225.0  // ~15 mg/dL std dev - poor sensor.
     private val rEffMax = 400.0
 
-    // R adaptation window length for innovation statistics.
-    private val innovationWindow = 18  // ≈90 minutes at 5‑min intervals.
+    // R adaptation window for innovation statistics, expressed in MINUTES so that it means the
+    // same thing at any cadence. It was 18 readings, whose own comment read "≈90 minutes at
+    // 5-min intervals": true only there, and 18 minutes on a one-minute feed. The reading count
+    // is derived per call from the observed spacing and kept as a buffer bound.
+    private val innovationWindowMinutes = 90.0
+    private val otherSeriesLagMinutes = 5.0
+    private val innovationWindowMinReadings = 6
+    private val innovationWindowMaxReadings = 120
+    private var innovationWindow = 18
 
     // Chi-squared based outlier detection (99.99% confidence, 1 DOF).
     private val chiSquaredThreshold = 15.13  // Statistically rigorous.
@@ -143,6 +151,17 @@ class UnscentedKalmanFilterPlugin(
     private val innovationValidationSamples = 15  // Need 15 samples before validating.
 
     // Gap handling.
+    /**
+     * Smallest spacing treated as a valid step. Below this the samples are duplicates or clock
+     * noise rather than a faster feed.
+     *
+     * This was 2.0, which silently made the filter a no-op on a one-minute sensor: every
+     * consecutive pair failed the segment test below, so no segment ever reached the two-sample
+     * minimum and `findDataSegments` returned an empty list. It never showed because the filter
+     * was fed the five-minute bucketed series, where the spacing is always 5.0. It bites the
+     * moment it is fed a native one-minute series.
+     */
+    private val minSampleSpacingMinutes = 0.5
     private val minorGapThreshold = 7.0       // Minutes - bridge with prediction.
     private val majorGapThreshold = 60.0      // Minutes - segment data.
     private val rateDecayTimeConstant = 30.0 // Minutes - physiological decay.
@@ -463,7 +482,10 @@ class UnscentedKalmanFilterPlugin(
 
         val timeDiffMinutes = (currentTimestamp - lastProcessedTimestamp) / millisPerMinute
 
-        if (timeDiffMinutes < 0) {
+        // On a feed faster than two minutes the runner smooths the five-minute series and then the native one
+        // with this one instance, and the five-minute grid ends up to five minutes before the newest native
+        // reading. That step back is the other series, not a clock fault, so it no longer resets learning.
+        if (timeDiffMinutes < -otherSeriesLagMinutes) {
             aapsLogger.info(LTag.GLUCOSE, "UKF: Timestamp went backwards, resetting learning")
             return true
         }
@@ -525,8 +547,52 @@ class UnscentedKalmanFilterPlugin(
     // MAIN FILTERING API
     // ============================================================
 
+    /**
+     * Median spacing of the supplied series, in minutes, or null when it cannot be established.
+     * Median rather than mean so that a single gap does not move it.
+     */
+    internal fun medianSpacingMinutes(data: List<InMemoryGlucoseValue>): Double? {
+        if (data.size < 3) return null
+        val gaps = ArrayList<Double>(data.size - 1)
+        for (i in 0 until data.size - 1) {
+            // data is newest-first
+            val d = (data[i].timestamp - data[i + 1].timestamp) / millisPerMinute
+            if (d > 0 && d <= majorGapThreshold) gaps.add(d)
+        }
+        if (gaps.size < 2) return null
+        gaps.sort()
+        val m = gaps.size / 2
+        return if (gaps.size % 2 == 0) (gaps[m - 1] + gaps[m]) / 2.0 else gaps[m]
+    }
+
+    /** Test accessor for the cadence-derived R adaptation window size. */
+    internal fun innovationWindowForTest(): Int = innovationWindow
+
+    /** Test accessor for the learning session, which increments on every reset. */
+    internal fun sessionIdForTest(): Int = sensorSessionId
+
+    /**
+     * Convert the duration-defined R adaptation window into a reading count for the cadence in
+     * hand.
+     *
+     * It was a fixed count tuned at five minutes, so on a one-minute feed the window shrank from
+     * 90 minutes to 18. The failure is not visible in the output, which is why it survived until
+     * the cadence work of 2026-07. Falls back to the five-minute count when the spacing cannot be
+     * determined.
+     */
+    internal fun adaptWindowsToCadence(data: List<InMemoryGlucoseValue>) {
+        val spacing = medianSpacingMinutes(data) ?: 5.0
+        val safe = spacing.coerceAtLeast(minSampleSpacingMinutes)
+        innovationWindow = (innovationWindowMinutes / safe).roundToInt()
+            .coerceIn(innovationWindowMinReadings, innovationWindowMaxReadings)
+    }
+
     override fun smooth(data: MutableList<InMemoryGlucoseValue>): MutableList<InMemoryGlucoseValue> {
         if (data.isEmpty()) return data
+
+        // Size the reading-count window from the cadence actually present, so that a window
+        // meaning "90 minutes" means that at any sampling rate.
+        adaptWindowsToCadence(data)
 
         try {
             return smoothInternal(data)
@@ -557,7 +623,7 @@ class UnscentedKalmanFilterPlugin(
             val timeDiff = (data[i].timestamp - data[i + 1].timestamp) / millisPerMinute
 
             // Segment at major gaps (>60 min), invalid spacing, or error code.
-            if (timeDiff !in 2.0..majorGapThreshold || data[i].value == 38.0) {
+            if (timeDiff !in minSampleSpacingMinutes..majorGapThreshold || data[i].value == 38.0) {
                 // Close current segment if it has enough points.
                 if (i - segmentStart >= 2) {
                     segments.add(DataSegment(segmentStart, i))
@@ -576,7 +642,8 @@ class UnscentedKalmanFilterPlugin(
     }
 
     private fun smoothInternal(data: MutableList<InMemoryGlucoseValue>): MutableList<InMemoryGlucoseValue> {
-        if (shouldResetLearning(data[0].timestamp)) {
+        val reset = shouldResetLearning(data[0].timestamp)
+        if (reset) {
             resetLearning()
         }
 
@@ -591,7 +658,10 @@ class UnscentedKalmanFilterPlugin(
 
         // Track new measurements across all segments.
         val previousTimestamp = lastProcessedTimestamp
-        lastProcessedTimestamp = data[0].timestamp
+        // Never moves back, so the five-minute pass learns nothing the native pass has already seen. A reset
+        // takes the incoming time, so a stored time ahead of the data (clock moved back, a future-dated
+        // reading) resets once rather than on every call.
+        lastProcessedTimestamp = if (reset) data[0].timestamp else max(lastProcessedTimestamp, data[0].timestamp)
 
         // Process each segment independently.
         for ((idx, segment) in segments.withIndex()) {
@@ -679,7 +749,10 @@ class UnscentedKalmanFilterPlugin(
 
         if (endIdx > 0) {
             val dt = (data[endIdx - 1].timestamp - data[endIdx].timestamp) / millisPerMinute
-            if (dt in 3.0..7.0) {
+            // Was 3.0..7.0, which no one-minute sample pair can satisfy, leaving the rate
+            // unseeded and the filter to converge from zero. Accept any spacing that is a real
+            // step and not a gap.
+            if (dt in minSampleSpacingMinutes..minorGapThreshold) {
                 initialRate = (data[endIdx - 1].calibratedOrValue - data[endIdx].calibratedOrValue) / dt
                 initialRate = initialRate.coerceIn(-4.0, 4.0)
             }

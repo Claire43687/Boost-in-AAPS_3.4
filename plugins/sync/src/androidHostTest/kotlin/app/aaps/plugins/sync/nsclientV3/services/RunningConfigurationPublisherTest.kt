@@ -102,7 +102,8 @@ class RunningConfigurationPublisherTest {
         return Json.parseToJsonElement(text).jsonObject[MasterDocVerifier.RUNNING_CONFIG]!!.jsonObject
     }
 
-    private fun publisher(): RunningConfigurationPublisher {
+    private fun publisher(uploadOn: Boolean = true): RunningConfigurationPublisher {
+        whenever(preferences.get(BooleanKey.NsClientUploadData)).thenReturn(uploadOn)
         val plugin = mock<NSClientV3Plugin>()
         whenever(plugin.nsAndroidClient).thenReturn(nsAndroidClient)
         whenever(plugin.wsConnectedFlow).thenReturn(MutableStateFlow(false))
@@ -185,6 +186,20 @@ class RunningConfigurationPublisherTest {
         whenever(preferences.get(BooleanKey.NsClient3UseWs)).thenReturn(false)
         whenever(runningConfiguration.hotConfiguration()).thenReturn(JsonObject(emptyMap()))
         whenever(authorizedRepository.observe()).thenReturn(emptyFlow())
+    }
+
+    @Test
+    fun `nothing is written to Nightscout while upload is off`() = runTest {
+        stubPollMode()
+        whenever(authorizedRepository.current(any())).thenReturn(emptyList())
+        whenever(runningConfiguration.configuration()).thenReturn(buildJsonObject { put("syncedPrefs", syncedPrefs) })
+        whenever(runningConfiguration.hotConfiguration()).thenReturn(buildJsonObject { })
+        val sut = publisher(uploadOn = false)
+
+        sut.start(backgroundScope)
+        runCurrent()
+        verify(nsAndroidClient, never()).updateSettings(any(), any())
+        sut.stop()
     }
 
     @Test

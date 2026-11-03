@@ -119,18 +119,21 @@ private fun RenderPreferenceItems(
                         insideCard = true
                     )
 
-                    // Content without card wrapper
+                    // Content without card wrapper. Rendered with this same function, so a sub-screen
+                    // nested inside this one gets its own header too. AdaptivePreferenceList draws keys
+                    // only, and a third-level sub-screen (Boost's Exercise > Step count) showed nothing.
                     if (isSubExpanded) {
                         if (item.items.isNotEmpty()) {
                             val theme = LocalPreferenceTheme.current
                             Column(
                                 modifier = Modifier.padding(start = theme.nestedContentIndent)
                             ) {
-                                AdaptivePreferenceList(
+                                RenderPreferenceItems(
                                     items = item.items,
+                                    parentKey = subSectionKey,
                                     onShowMessage = onShowMessage,
-                                    visibilityContext = visibilityContext,
-                                    onNavigateToSubScreen = null // Nested subscreens not supported here
+                                    sectionState = sectionState,
+                                    visibilityContext = visibilityContext
                                 )
                             }
                         }

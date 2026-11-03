@@ -261,7 +261,19 @@ enum class NotificationId(
     // A real pump is selected, but AAPS has no Bluetooth (Nearby devices) permission, so no command can reach the
     // pump and the queue fails them (#5440). It removes itself once the permission is back. IMPORTANT, not URGENT:
     // a bolus that fails because of it raises its own alarm. Appended at the END for the same reason as above.
-    BLUETOOTH_PERMISSION_MISSING(IMPORTANT, PUMP);
+    BLUETOOTH_PERMISSION_MISSING(IMPORTANT, PUMP),
+
+    // Boost: free-text messages from the Boost engine (settings reconciled, auto-configuration
+    // applied, heart-rate feed dark). Boost 3.4 posted these as USER_MESSAGE, which AAPS 4.0 removed.
+    // allowMultiple, because the messages are independent and one must not replace another.
+    // Appended at the END for the same reason as above.
+    BOOST_MESSAGE(LOW, LOOP, allowMultiple = true),
+
+    // Boost: the insulin assumed for downloaded history. Appended at the END for the same reason.
+    BOOST_HISTORY_INSULIN_ASSUMED(IMPORTANT, SYSTEM),
+
+    // Boost: the insulin-need watch. Its own id, so a later notice replaces only its own text. Appended at the END.
+    BOOST_NEED_WATCH(INFO, LOOP);
 
     companion object {
 

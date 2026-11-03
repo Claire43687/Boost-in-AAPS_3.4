@@ -683,6 +683,12 @@ class MainViewModel(
      */
     val showExit: Boolean get() = config.platform != AppPlatform.Ios
 
+    /**
+     * Whether the drawer offers the Boost V2 overview. Only the Android activity registers its route,
+     * so on the other shells the row would lead nowhere.
+     */
+    val showBoostOverview: Boolean get() = config.platform == AppPlatform.Android
+
     fun buildAboutDialogData(appName: String): AboutDialogData {
         var message = "Build: ${config.BUILD_VERSION}\n"
         message += "Flavor: ${config.FLAVOR}${config.BUILD_TYPE}\n"

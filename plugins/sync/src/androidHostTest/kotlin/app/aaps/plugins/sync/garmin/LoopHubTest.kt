@@ -7,6 +7,7 @@ import app.aaps.core.data.model.GlucoseUnit
 import app.aaps.core.data.model.HR
 import app.aaps.core.data.model.ICfg
 import app.aaps.core.data.model.RM
+import app.aaps.core.data.model.SC
 import app.aaps.core.data.model.SourceSensor
 import app.aaps.core.data.model.TB
 import app.aaps.core.data.model.TrendArrow
@@ -315,5 +316,67 @@ class LoopHubTest : TestBase() {
         )
         kotlinx.coroutines.delay(100.milliseconds) // Give time for GlobalScope.launch to complete
         verify(persistenceLayer).insertOrUpdateHeartRates(listOf(hr))
+    }
+
+    @Test
+    fun testStoreHeartRates_dropsInvalidSamplesAndStoresOneMinuteRows() = runTest {
+        val rows = listOf(
+            HR(timestamp = 60_000L, duration = 60_000L, dateCreated = clock.millis(), beatsPerMinute = 72.0, device = "venu3"),
+            HR(timestamp = 120_000L, duration = 60_000L, dateCreated = clock.millis(), beatsPerMinute = 75.0, device = "venu3"),
+        )
+        whenever(persistenceLayer.getHeartRatesFromTimeToTime(60_000L, 120_000L)).thenReturn(emptyList())
+        whenever(persistenceLayer.insertOrUpdateHeartRates(rows)).thenReturn(PersistenceLayer.TransactionResult())
+        // 10 bpm and a zero timestamp are both rejected; the two valid samples go in one batch.
+        loopHub.storeHeartRates(listOf(60_000L to 72, 90_000L to 10, 0L to 80, 120_000L to 75), "venu3")
+        verify(persistenceLayer).getHeartRatesFromTimeToTime(60_000L, 120_000L)
+        verify(persistenceLayer).insertOrUpdateHeartRates(rows)
+    }
+
+    // A batch the watch resends after a reconnect is not stored again.
+    @Test
+    fun testStoreHeartRates_replayedMinutesAreSkipped() = runTest {
+        val stored = HR(timestamp = 60_000L, duration = 60_000L, dateCreated = 1L, beatsPerMinute = 72.0, device = "venu3")
+        val newRow = HR(timestamp = 120_000L, duration = 60_000L, dateCreated = clock.millis(), beatsPerMinute = 75.0, device = "venu3")
+        whenever(persistenceLayer.getHeartRatesFromTimeToTime(60_000L, 120_000L)).thenReturn(listOf(stored))
+        whenever(persistenceLayer.insertOrUpdateHeartRates(listOf(newRow))).thenReturn(PersistenceLayer.TransactionResult())
+        loopHub.storeHeartRates(listOf(60_000L to 72, 120_000L to 75, 120_000L to 75), "venu3")
+        verify(persistenceLayer).getHeartRatesFromTimeToTime(60_000L, 120_000L)
+        verify(persistenceLayer).insertOrUpdateHeartRates(listOf(newRow))
+    }
+
+    @Test
+    fun testStoreHeartRates_nothingValidStoresNothing() {
+        loopHub.storeHeartRates(listOf(60_000L to 5), null)
+        // verifyNoMoreInteractions(persistenceLayer) in the AfterEach asserts no write.
+    }
+
+    @Test
+    fun testStoreSteps_clampsCumulativeCounter() = runTest {
+        // The Venu 3 fault: the day's cumulative counter in all six windows.
+        val sc = SC(
+            duration = 300_000L, timestamp = 1_700_000_000_000L,
+            steps5min = 1000, steps10min = 1919, steps15min = 1919,
+            steps30min = 1919, steps60min = 1919, steps180min = 1919,
+            device = "Garmin", dateCreated = clock.millis()
+        )
+        whenever(persistenceLayer.insertOrUpdateStepsCounts(listOf(sc))).thenReturn(PersistenceLayer.TransactionResult())
+        loopHub.storeSteps(1_700_000_000_000L, 1919, 1919, 1919, 1919, 1919, 1919, null)
+        verify(persistenceLayer).insertOrUpdateStepsCounts(listOf(sc))
+    }
+
+    @Test
+    fun testStoreSteps_noTimestampStoresNothing() {
+        loopHub.storeSteps(0L, 100, 200, 300, 400, 500, 600, "venu3")
+    }
+
+    @Test
+    fun testLoopStatus() = runTest {
+        whenever(loop.runningMode()).thenReturn(RM.Mode.CLOSED_LOOP_LGS)
+        assertEquals("LGS", loopHub.loopStatus)
+        whenever(loop.runningMode()).thenReturn(RM.Mode.SUSPENDED_BY_USER)
+        assertEquals("SUSPEND", loopHub.loopStatus)
+        whenever(loop.runningMode()).thenReturn(RM.Mode.RESUME)
+        assertEquals("LOOP", loopHub.loopStatus)
+        verify(loop, times(3)).runningMode()
     }
 }

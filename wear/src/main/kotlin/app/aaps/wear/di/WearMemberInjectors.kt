@@ -19,12 +19,15 @@ import app.aaps.wear.complications.ComplicationTapActivity
 import app.aaps.wear.complications.CwfAmbientBgComplication
 import app.aaps.wear.complications.CwfAmbientStatusComplication
 import app.aaps.wear.complications.CwfImageComplication
+import app.aaps.wear.complications.DynIsfComplication
 import app.aaps.wear.complications.IobDetailedComplication
 import app.aaps.wear.complications.IobIconComplication
 import app.aaps.wear.complications.LongStatusComplication
 import app.aaps.wear.complications.LongStatusFlippedComplication
 import app.aaps.wear.complications.RunningModeComplication
 import app.aaps.wear.complications.SgvComplication
+import app.aaps.wear.complications.SgvRangedComplication
+import app.aaps.wear.complications.TirWeightedComplication
 import app.aaps.wear.complications.SgvComplicationExt1
 import app.aaps.wear.complications.SgvComplicationExt2
 import app.aaps.wear.complications.SgvLargeComplication
@@ -409,6 +412,24 @@ object WearMemberInjectors {
     @IntoMap
     @ClassKey(SgvComplication::class)
     fun bindSgvComplication(injector: MembersInjector<SgvComplication>): MembersInjector<*> = injector
+
+    @Provides
+    @FeatureMemberInjectors
+    @IntoMap
+    @ClassKey(SgvRangedComplication::class)
+    fun bindSgvRangedComplication(injector: MembersInjector<SgvRangedComplication>): MembersInjector<*> = injector
+
+    @Provides
+    @FeatureMemberInjectors
+    @IntoMap
+    @ClassKey(TirWeightedComplication::class)
+    fun bindTirWeightedComplication(injector: MembersInjector<TirWeightedComplication>): MembersInjector<*> = injector
+
+    @Provides
+    @FeatureMemberInjectors
+    @IntoMap
+    @ClassKey(DynIsfComplication::class)
+    fun bindDynIsfComplication(injector: MembersInjector<DynIsfComplication>): MembersInjector<*> = injector
 
     @Provides
     @FeatureMemberInjectors

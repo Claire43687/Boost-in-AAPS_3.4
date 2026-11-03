@@ -2120,4 +2120,192 @@ class AutosensDataStoreTest : TestBaseWithProfile() {
 
         assertThat(autosensDataStore.bucketedData).isEmpty()
     }
+
+    // ---- native cadence (ported from Boost 6.1.2) ------------------------------------------------
+
+    /** Terse GV for the native-cadence tests below. */
+    private fun gv(ts: Long, v: Double) = GV(
+        raw = 0.0, noise = 0.0, value = v, timestamp = ts,
+        sourceSensor = SourceSensor.UNKNOWN, trendArrow = TrendArrow.FLAT
+    )
+
+    // Trio hit a "V-spike" : a CGM backfill landed a minute after a regular reading,
+    // the smoother's segment test broke on the sub-2-minute gap, and the filter re-initialised
+    // from that point's RAW value, discarding the smoothed trend. It was Trio-specific only
+    // because AAPS buckets before smoothing. Passing AAPS the raw series would inherit it, so the
+    // native series is a regular grid rather than the raw readings.
+
+    @Test
+    fun nativeSeriesIsRegularlySpacedDespiteAnIrregularBackfill() {
+        val store = autosensDataStore
+        val base = 1_700_000_000_000L
+        val readings = ArrayList<GV>()
+        // one-minute feed with a backfill landing 20 s after the reading at t-4 min
+        for (i in 0 until 40) {
+            readings.add(gv(base - i * 60_000L, 100.0 + i))
+        }
+        readings.add(gv(base - 4 * 60_000L + 20_000L, 65.0))
+        readings.sortByDescending { it.timestamp }
+        store.bgReadings = readings
+        store.createBucketedData(aapsLogger, dateUtil)
+
+        val native = store.bucketedDataNative
+        assertThat(native).isNotNull()
+        assertThat(native!!.size).isGreaterThan(10)
+        // every consecutive spacing is the cadence, so no sub-cadence gap can break a segment
+        for (i in 0 until native.size - 1) {
+            val gap = (native[i].timestamp - native[i + 1].timestamp) / 60000.0
+            assertThat(gap).isWithin(0.01).of(1.0)
+        }
+    }
+
+    @Test
+    fun nativeSeriesKeepsEveryMinuteRatherThanOneInFive() {
+        val store = autosensDataStore
+        val base = 1_700_000_000_000L
+        store.bgReadings = (0 until 30).map { gv(base - it * 60_000L, 100.0 + it) }.toMutableList()
+        store.createBucketedData(aapsLogger, dateUtil)
+        // the five-minute series thins to roughly a fifth; the native one does not
+        assertThat(store.bucketedDataNative!!.size).isGreaterThan(store.bucketedData!!.size * 3)
+        assertThat(store.detectedCadenceMinutes!!).isWithin(1e-9).of(1.0)
+    }
+
+    @Test
+    fun aFiveMinuteFeedSharesOneSeriesRatherThanBuildingTwo() {
+        val store = autosensDataStore
+        val base = 1_700_000_000_000L
+        store.bgReadings = (0 until 20).map { gv(base - it * 300_000L, 100.0 + it) }.toMutableList()
+        store.createBucketedData(aapsLogger, dateUtil)
+        assertThat(store.bucketedDataNative).isSameInstanceAs(store.bucketedData)
+        assertThat(store.detectedCadenceMinutes!!).isWithin(1e-9).of(5.0)
+    }
+
+    @Test
+    fun aFiveMinuteFeedStillSharesOneSeriesAfterTheBucketedListIsReplaced() {
+        // Specific to this port. The smoother here works on a copy and the result is assigned to
+        // bucketedData alone, and the calculation then publishes a clone. Boost 6.1.2 smoothed in
+        // place, so a stored reference stayed right; here it would have left the delta calculation
+        // reading the unsmoothed list. Both replacements must leave the two series the same list.
+        val store = autosensDataStore
+        val base = 1_700_000_000_000L
+        store.bgReadings = (0 until 20).map { gv(base - it * 300_000L, 100.0 + it) }.toMutableList()
+        store.createBucketedData(aapsLogger, dateUtil)
+        val smoothed = store.bucketedData!!.map { it.copy(smoothed = it.value + 1.0) }.toMutableList()
+        store.bucketedData = smoothed
+        assertThat(store.bucketedDataNative).isSameInstanceAs(smoothed)
+        val copy = store.clone()
+        assertThat(copy.bucketedDataNative).isSameInstanceAs(copy.bucketedData)
+        assertThat(copy.getBucketedDataNativeTableCopy()!!.map { it.smoothed }).isEqualTo(smoothed.map { it.smoothed })
+    }
+
+    @Test
+    fun cloneCarriesADistinctNativeSeriesAndTheCadence() {
+        val store = autosensDataStore
+        val base = 1_700_000_000_000L
+        store.bgReadings = (0 until 30).map { gv(base - it * 60_000L, 100.0 + it) }.toMutableList()
+        store.createBucketedData(aapsLogger, dateUtil)
+        val copy = store.clone()
+        assertThat(copy.detectedCadenceMinutes).isEqualTo(store.detectedCadenceMinutes)
+        assertThat(copy.bucketedDataNative).isNotSameInstanceAs(copy.bucketedData)
+        assertThat(copy.bucketedDataNative!!.map { it.timestamp }).isEqualTo(store.bucketedDataNative!!.map { it.timestamp })
+    }
+
+    @Test
+    fun actualBgNativeFollowsTheNativeSeriesNotTheFiveMinuteBucket() {
+        // The decision RATE is set by whichever series the loop trigger reads. On a one-minute
+        // feed the bucketed series still advances only every five minutes, so a trigger reading it
+        // cannot loop faster than that however fresh the data is.
+        val now = System.currentTimeMillis()
+        val native = mutableListOf(
+            InMemoryGlucoseValue(now, 100.0),
+            InMemoryGlucoseValue(now - 60_000, 101.0),
+            InMemoryGlucoseValue(now - 120_000, 102.0)
+        )
+        val bucketed = mutableListOf(
+            InMemoryGlucoseValue(now - 240_000, 105.0),
+            InMemoryGlucoseValue(now - 540_000, 106.0)
+        )
+        autosensDataStore.bucketedData = bucketed
+        autosensDataStore.bucketedDataNative = native
+
+        assertThat(autosensDataStore.actualBg()!!.timestamp).isEqualTo(now - 240_000)
+        assertThat(autosensDataStore.actualBgNative()!!.timestamp).isEqualTo(now)
+    }
+
+    @Test
+    fun actualBgNativeIsTheSameAsActualBgOnAFiveMinuteFeed() {
+        // On a five-minute feed the native series is the bucketed series itself, so enabling
+        // native-cadence looping must be an exact no-op there.
+        val now = System.currentTimeMillis()
+        val bucketed = mutableListOf(
+            InMemoryGlucoseValue(now - 60_000, 100.0),
+            InMemoryGlucoseValue(now - 360_000, 101.0)
+        )
+        autosensDataStore.bucketedData = bucketed
+        autosensDataStore.bucketedDataNative = bucketed
+
+        assertThat(autosensDataStore.actualBgNative()!!.timestamp)
+            .isEqualTo(autosensDataStore.actualBg()!!.timestamp)
+    }
+
+    @Test
+    fun anUnanchoredStoreStillTakesItsAnchorFromTheFirstReading() {
+        // The -1 case is deliberate and must survive: a store that has never bucketed anything
+        // anchors on what it is first given. Only the copying of an EXISTING anchor was missing.
+        assertThat(AutosensDataStoreObject().referenceTime).isEqualTo(-1L)
+        val copy = autosensDataStore.clone() as AutosensDataStoreObject
+        assertThat(copy.referenceTime).isEqualTo(-1L)
+    }
+
+    @Test
+    fun aOneMinuteFeedKeepsTheFiveMinuteSeriesOnItsGridAcrossClones() {
+        // On a one-minute feed, re-bucketing through a clone that had lost the anchor re-anchored
+        // the grid to the newest reading, so bucketedData[0] advanced once per reading instead of
+        // once per five minutes. Beta1 carries the anchor through clone(); this pins that.
+        val base = 1_700_000_000_000L
+        val store = autosensDataStore
+        store.bgReadings = (0 until 40).map { gv(base - it * 60_000L, 100.0 + it) }.toMutableList()
+        store.createBucketedData(aapsLogger, dateUtil)
+        val anchored = store.bucketedData!![0].timestamp
+
+        // One further minute of data arrives, via a clone as the workers do it.
+        val next = store.clone()
+        next.bgReadings = (0 until 41).map { gv(base + 60_000L - it * 60_000L, 100.0 + it) }.toMutableList()
+        next.createBucketedData(aapsLogger, dateUtil)
+
+        // The newest bucket must not have moved by a minute; the grid holds.
+        val moved = next.bucketedData!![0].timestamp - anchored
+        assertThat(moved % T.mins(5).msecs()).isEqualTo(0L)
+    }
+
+    @Test
+    fun theBucketedSeriesAdvancesOnEveryReadingAsThePhaseDrifts() {
+        // A sensor's period is never exactly five minutes, so the arrival phase creeps against a
+        // fixed grid. Once it creeps past the two and a half minute rounding boundary, a reading can
+        // be rounded up to the next grid point and mapped back a whole step, so the head of the
+        // bucketed series stops advancing. The loop trigger compares against that head, so the loop
+        // would stop running.
+        //
+        // Readings exactly five minutes apart never change phase and would pass whatever the anchor
+        // does, which is why this walks the phase instead of holding it.
+        val base = 1_700_000_000_000L
+        val period = T.mins(5).msecs() + 3000L        // three seconds fast, so the phase creeps
+        val store = AutosensDataStoreObject()
+        var previous = 0L
+        for (step in 0 until 120) {                   // 6 minutes of creep, well past the boundary
+            val newest = base + step * period
+            store.bgReadings = (0..40).map { gv(newest - it * period, 100.0 + it) }
+            store.createBucketedData(aapsLogger, dateUtil)
+            val head = store.bucketedData!![0].timestamp
+            if (step > 0) {
+                assertThat(head).isGreaterThan(previous)
+            }
+            previous = head
+            // what the workers do between cycles: copy, work on the copy, install the copy
+            val copy = store.clone() as AutosensDataStoreObject
+            store.bgReadings = copy.bgReadings
+            store.bucketedData = copy.bucketedData
+            store.referenceTime = copy.referenceTime
+        }
+    }
 }

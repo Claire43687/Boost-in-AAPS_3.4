@@ -1,8 +1,10 @@
 package app.aaps.plugins.sync.nsclientV3
 
 import app.aaps.core.data.model.BCR
+import app.aaps.core.data.model.ICfg
 import app.aaps.core.data.model.TrendArrow
 import app.aaps.core.data.time.T
+import app.aaps.core.interfaces.insulin.InsulinManager
 import app.aaps.core.interfaces.insulin.InsulinType
 import app.aaps.core.interfaces.nsclient.NSClientRepository
 import app.aaps.core.interfaces.nsclient.StoreDataForDb
@@ -40,6 +42,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.Mock
 import org.mockito.kotlin.any
 import org.mockito.kotlin.argThat
+import org.mockito.kotlin.clearInvocations
 import org.mockito.kotlin.never
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
@@ -56,6 +59,7 @@ class NsIncomingDataProcessorTest : TestBaseWithProfile() {
     @Mock lateinit var nsClientRepository: NSClientRepository
     @Mock lateinit var nsClient: NsClient
     @Mock lateinit var dataSyncSelector: DataSyncSelector
+    @Mock lateinit var insulinManagerForFallback: InsulinManager
     private val nsiCfg = NSICfg(insulinLabel = "Fake", insulinEndTime = 9 * 3600 * 1000, insulinPeakTime = 60 * 60 * 1000, concentration = 1.0)
 
     @BeforeEach
@@ -80,8 +84,10 @@ class NsIncomingDataProcessorTest : TestBaseWithProfile() {
             config = config,
             profileStoreProvider = { profileStoreProvider() },
             notificationManager = notificationManager,
-            nsClientRepository = nsClientRepository
+            nsClientRepository = nsClientRepository,
+            insulinManager = insulinManagerForFallback
         )
+        whenever(insulinManagerForFallback.insulins).thenReturn(ArrayList())
     }
 
     @Test
@@ -307,6 +313,28 @@ class NsIncomingDataProcessorTest : TestBaseWithProfile() {
         processor.processTreatments(treatments, doFullSync = false)
 
         verify(storeDataForDb).addToBoluses(argThat { iCfg == InsulinType.OREF_RAPID_ACTING.iCfg })
+    }
+
+    @Test
+    fun `with nothing in force a single usable catalogue entry is used`() {
+        val imported = ICfg("Imported", 36_000_000L, 2_280_000L, 1.0)
+        whenever(profileFunction.runningICfg).thenReturn(MutableStateFlow(null))
+        val rapid = InsulinType.OREF_RAPID_ACTING.iCfg
+
+        whenever(insulinManagerForFallback.insulins).thenReturn(arrayListOf(imported))
+        processor.processTreatments(listOf(bolusWithoutICfg()), doFullSync = true)
+        verify(storeDataForDb).addToBoluses(argThat { iCfg == imported })
+
+        clearInvocations(storeDataForDb)
+        whenever(insulinManagerForFallback.insulins).thenReturn(arrayListOf(imported, imported))
+        processor.processTreatments(listOf(bolusWithoutICfg()), doFullSync = true)
+        verify(storeDataForDb).addToBoluses(argThat { iCfg == rapid })
+
+        // An unusable curve aborts APS cycles.
+        clearInvocations(storeDataForDb)
+        whenever(insulinManagerForFallback.insulins).thenReturn(arrayListOf(ICfg("Bad", -1L, -1L, 1.0)))
+        processor.processTreatments(listOf(bolusWithoutICfg()), doFullSync = true)
+        verify(storeDataForDb).addToBoluses(argThat { iCfg == rapid })
     }
 
     private fun bolusWithoutICfg() = NSBolus(
@@ -820,6 +848,40 @@ class NsIncomingDataProcessorTest : TestBaseWithProfile() {
         verify(storeDataForDb).addToRunningModes(argThat {
             timestamp == eventTime
         })
+    }
+
+    private fun closedLoopEvent(time: Long) = NSOfflineEvent(
+        identifier = "offline_id",
+        date = time,
+        isValid = true,
+        eventType = EventType.APS_OFFLINE,
+        utcOffset = null,
+        notes = null,
+        pumpId = null,
+        endId = null,
+        pumpType = null,
+        pumpSerial = null,
+        duration = 0L,
+        originalDuration = 0,
+        reason = NSOfflineEvent.Reason.OTHER,
+        mode = NSOfflineEvent.Mode.CLOSED_LOOP,
+        autoForced = false,
+        reasons = null
+    )
+
+    // Another phone's closed loop row, on an install with no row of its own, would switch the loop on.
+    @Test
+    fun `a history backfill does not take a running mode`() {
+        whenever(preferences.get(BooleanKey.NsClientAcceptRunningMode)).thenReturn(false)
+        processor.processTreatments(listOf(closedLoopEvent(now - T.days(1).msecs())), doFullSync = true, historyBackfill = true)
+        verify(storeDataForDb, never()).addToRunningModes(any())
+    }
+
+    @Test
+    fun `a full sync the person asked for still takes a running mode`() {
+        whenever(preferences.get(BooleanKey.NsClientAcceptRunningMode)).thenReturn(false)
+        processor.processTreatments(listOf(closedLoopEvent(now - T.days(1).msecs())), doFullSync = true)
+        verify(storeDataForDb).addToRunningModes(any())
     }
 
     @Test

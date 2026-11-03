@@ -44,5 +44,13 @@ enum class LongNonKey(
     NsClientControlColdSignedAt("nsclient_control_cold_signed_at", 0L, exportable = false),
     NsClientControlHotSignedAt("nsclient_control_hot_signed_at", 0L, exportable = false),
     LastVacuumRun("last_vacuum_run", 0L),
+    // Boost
+    ApsBoostHealthConnectLastSyncMs("boost_health_connect_last_sync_ms", 0L),
+    ApsBoostV5AutoConfigLastRedriveMs("boost_v5_autoconfig_last_redrive_ms", 0L),
+    // Insulin-need watch (InsulinNeedWatch): when the person was last told their daily insulin had
+    // moved above or below their month, so the same direction waits 14 days to repeat.
+    ApsBoostNeedWatchLastAboveMs("boost_need_watch_last_above_ms", 0L),
+    ApsBoostNeedWatchLastBelowMs("boost_need_watch_last_below_ms", 0L),
+    ApsBoostHistorySyncLastAttemptMs("boost_history_sync_last_attempt_ms", 0L, exportable = false),
+    ApsBoostHistorySyncFirstSeenMs("boost_history_sync_first_seen_ms", 0L, exportable = false)
 }
-

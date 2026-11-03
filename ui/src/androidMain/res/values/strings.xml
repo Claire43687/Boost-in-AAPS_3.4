@@ -18,6 +18,8 @@
     <string name="widget_glucose_circle_description">AAPS glucose circle</string>
     <string name="widget_compact_bg_description">AAPS BG + IOB + COB (compact)</string>
     <string name="widget_small_description">AAPS Small</string>
+    <string name="boost_widget_description">Boost algorithm widget</string>
+    <string name="boost_widget_bobble_description" comment="Screen-reader name of the drawn glucose ring on the Boost widget. The ring shows the latest glucose value and its trend.">Glucose and trend</string>
 
     <!--     Activities-->
     <string name="dexcom_tir">Dexcom TIR</string>
@@ -183,6 +185,10 @@
     <string name="a11y_add_new_insulin">Add new insulin</string>
     <string name="a11y_delete_current_insulin">Delete current insulin</string>
     <string name="load_peak_from">Load peak from</string>
+    <string name="insulin_curve_lyumjev_pd">Lyumjev PD curve (peak depends on dose)</string>
+    <string name="insulin_curve_lyumjev_pd_summary">Boost glucodynamic model. DIA is fixed at 8 h and the peak is set by the size of each dose, so peak and DIA cannot be edited.</string>
+    <string name="insulin_lyumjev_pd_nickname">Lyumjev PD</string>
+    <string name="insulin_lyumjev_pd_concentration">The Lyumjev PD curve is only defined for U100 and U200 insulin</string>
     <string name="cannot_delete_last_insulin">Cannot delete the last insulin</string>
     <string name="cannot_delete_active_insulin">Cannot delete the active insulin</string>
 
@@ -381,5 +387,35 @@
     <string name="cal_precheck_delta_too_high">Glucose is changing too fast (Δ %1$s %3$s per 5 min, limit %2$s). Wait for stability.</string>
     <string name="cal_precheck_mark_sensor_change">Mark sensor change</string>
     <string name="graph_therapy_event_bg_with_note" comment="Shown when the user taps a BG check in the overview graph. %1$s = glucose with its unit, %2$s = the note the user wrote. Example: 6.1 mmol/L, before lunch">%1$s, %2$s</string>
+
+    <!-- Boost V2 overview -->
+    <string name="boost_overview_title">Boost overview</string>
+    <string name="boost_v2_badge">BOOST</string>
+    <string name="boost_v2_details">Open Boost details</string>
+    <string name="boost_v2_pump">PUMP</string>
+    <string name="boost_v2_reading">READING</string>
+    <string name="boost_v2_target">TARGET</string>
+    <string name="boost_v2_iob">IOB</string>
+    <string name="boost_v2_dynisf">DYNISF</string>
+    <string name="boost_v2_tdd">TDD</string>
+    <string name="boost_v2_profile">PROFILE</string>
+    <string name="boost_v2_score">SCORE</string>
+    <string name="boost_v2_insulin">INSULIN</string>
+    <string name="boost_v2_calculator">CALCULATOR</string>
+    <string name="boost_v2_carbs">CARBS</string>
+    <string name="boost_v2_treatment">TREAT</string>
+    <string name="boost_v2_calibration">CALIB</string>
+    <string name="boost_v2_cgm">CGM</string>
+    <string name="boost_v2_accept_temp">ACCEPT TEMP</string>
+    <string name="boost_v2_chart_standard">Standard</string>
+    <string name="boost_v2_chart_v2">V2</string>
+    <string name="boost_v2_hr_steps">HEART RATE · STEPS</string>
+    <string name="boost_v2_heart_rate">HEART RATE</string>
+    <string name="boost_v2_steps">STEPS</string>
+    <string name="boost_v2_dialog_iob_title">IOB</string>
+    <string name="boost_v2_dialog_dynisf_title">Dynamic ISF</string>
+    <string name="boost_v2_dialog_tdd_title">Total Daily Dose</string>
+    <string name="boost_v2_dialog_v5_title">Boost decision</string>
+    <string name="boost_v2_dialog_exercise_title">Exercise / Activity Mode</string>
 
 </resources>

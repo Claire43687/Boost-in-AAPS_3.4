@@ -63,7 +63,7 @@ import kotlin.time.Instant
 
 /**
  * Merged worker covering: BG load+smooth, bucketed data prep, BG readings prep,
- * IOB/COB autosens (oref1 or oref), and the IOB/autosens graph data pass.
+ * IOB/COB autosens (oref1 or oref), the loop run on a MAIN chain, and the IOB/autosens graph data pass.
  *
  * [bgDataReload] controls the optional initial DB load+smooth pass.
  * [emitFinalProgress] is set when this phase is the last in the chain (HISTORY);
@@ -83,6 +83,7 @@ class PrepareGraphDataRunner(
     private val profiler: Profiler,
     private val decimalFormatter: DecimalFormatter,
     private val scope: CoroutineScope,
+    private val loopTrigger: CalculationLoopTrigger,
     private val autosensDataProvider: () -> AutosensData
 ) : CalculationPhase {
 
@@ -126,6 +127,12 @@ class PrepareGraphDataRunner(
         val superseded = { isStopped() || workflowChainData.prepareFor(job, generation) == null }
         if (activePlugin.activeSensitivity.isOref1) runIobCobOref1(data, isStopped, superseded) else runIobCobOref(data, isStopped, superseded)
         if (isStopped()) return WorkOutcome.Stopped
+        // The loop has what it needs now; the step below only builds graph data. Boost runs it here so
+        // a reading is not held up by drawing, see CalculationLoopTrigger.
+        if (data.invokeLoop) {
+            loopTrigger.invokeIfNewBg()
+            if (isStopped()) return WorkOutcome.Stopped
+        }
         prepareIobAutosensGraphData(data, isStopped)
         if (isStopped()) return WorkOutcome.Stopped
         data.signals.emitProgress(CalculationWorkflow.ProgressData.DRAW_IOB, 100)
@@ -181,13 +188,25 @@ class PrepareGraphDataRunner(
     }
 
     private suspend fun AutosensDataStore.smoothData() {
-        val workingCopy = dataLock.withLock {
-            bucketedData?.map { it.copy(smoothed = null, calibrated = null) }?.toMutableList()
-        } ?: return
-        val calibrated = activePlugin.activeCalibration.calibrate(workingCopy, CalibrationContext.NONE)
-        val smoothed = activePlugin.activeSmoothing.smooth(calibrated)
+        // The native series is taken only when it is a distinct list, which it is only on a feed
+        // faster than two minutes. Otherwise it is bucketedData itself and follows the assignment
+        // below. Until the smoother only ever saw the five-minute series, so on a one-minute
+        // sensor it was filtering an interpolated reconstruction in which four of every five real
+        // readings had already been replaced by an interpolation of their neighbours.
+        val (workingCopy, nativeCopy) = dataLock.withLock {
+            val bucketed = bucketedData
+            val native = bucketedDataNative
+            Pair(
+                bucketed?.map { it.copy(smoothed = null, calibrated = null) }?.toMutableList(),
+                native?.takeIf { it !== bucketed }?.map { it.copy(smoothed = null, calibrated = null) }?.toMutableList()
+            )
+        }
+        if (workingCopy == null) return
+        val smoothed = activePlugin.activeSmoothing.smooth(activePlugin.activeCalibration.calibrate(workingCopy, CalibrationContext.NONE))
+        val smoothedNative = nativeCopy?.let { activePlugin.activeSmoothing.smooth(activePlugin.activeCalibration.calibrate(it, CalibrationContext.NONE)) }
         dataLock.withLock {
             bucketedData = smoothed
+            if (smoothedNative != null) bucketedDataNative = smoothedNative
         }
     }
 

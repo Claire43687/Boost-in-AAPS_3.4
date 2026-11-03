@@ -174,6 +174,8 @@ class GarminPlugin(
             server = HttpServer(aapsLogger, port).apply {
                 registerEndpoint("/get", requestHandler(::onGetBloodGlucose))
                 registerEndpoint("/carbs", requestHandler(::onPostCarbs))
+                registerEndpoint("/hr", requestHandler(::onPostHeartRates))
+                registerEndpoint("/steps", requestHandler(::onPostSteps))
                 registerEndpoint("/connect", requestHandler(::onConnectPump))
                 registerEndpoint("/sgv.json", requestHandler(::onSgv))
                 awaitReady(wait)
@@ -400,6 +402,29 @@ class GarminPlugin(
         return ""
     }
 
+    /** Handles a batch of fine-grained HR samples from the Garmin CIQ background service (workstream B,
+     *  ). Format: /hr?device=<name>&samples=<tSec>:<bpm>,<tSec>:<bpm>,...  where tSec is the
+     *  end-of-minute epoch SECONDS and bpm the max (or value) for that minute. Peak preservation is
+     *  downstream (hrBpmMax5m over the 1-min rows), so we just persist the samples. */
+    @VisibleForTesting
+    fun onPostHeartRates(uri: URI): CharSequence {
+        if (getQueryParameter(uri, "test", false)) return ""
+        val device = getQueryParameter(uri, "device")
+        val raw = getQueryParameter(uri, "samples") ?: return ""
+        val samples = raw.split(",").mapNotNull { pair ->
+            val parts = pair.split(":")
+            if (parts.size != 2) return@mapNotNull null
+            val tSec = parts[0].trim().toLongOrNull() ?: return@mapNotNull null
+            val bpm = parts[1].trim().toIntOrNull() ?: return@mapNotNull null
+            Pair(tSec * 1000L, bpm)
+        }
+        if (samples.isNotEmpty()) {
+            aapsLogger.info(LTag.GARMIN, "received ${samples.size} HR samples from ${device ?: "Garmin"}")
+            loopHub.storeHeartRates(samples, device)
+        }
+        return ""
+    }
+
     private fun postCarbs(carbs: Int) {
         if (carbs > 0) {
             if (config.AAPSCLIENT)
@@ -407,6 +432,27 @@ class GarminPlugin(
             else
                 loopHub.postCarbs(carbs)
         }
+    }
+
+    /** Handles a Garmin step-count snapshot (workstream B). Format:
+     *  /steps?device=<name>&t=<endSec>&s5=<n>&s10=<n>&s15=<n>&s30=<n>&s60=<n>&s180=<n>
+     *  The six trailing-window counts are computed device-side from the cumulative counter. */
+    @VisibleForTesting
+    fun onPostSteps(uri: URI): CharSequence {
+        if (getQueryParameter(uri, "test", false)) return ""
+        val tSec = getQueryParameter(uri, "t", 0L)
+        if (tSec <= 0L) return ""
+        loopHub.storeSteps(
+            tSec * 1000L,
+            getQueryParameter(uri, "s5", 0L).toInt(),
+            getQueryParameter(uri, "s10", 0L).toInt(),
+            getQueryParameter(uri, "s15", 0L).toInt(),
+            getQueryParameter(uri, "s30", 0L).toInt(),
+            getQueryParameter(uri, "s60", 0L).toInt(),
+            getQueryParameter(uri, "s180", 0L).toInt(),
+            getQueryParameter(uri, "device")
+        )
+        return ""
     }
 
     /** Handles pump connected notification that the user entered on the Garmin device. */
@@ -487,6 +533,9 @@ class GarminPlugin(
                     }
                 }
                 jo.addProperty("cob", loopHub.carbsOnboard)
+                jo.addProperty("loop", loopHub.loopStatus)
+                loopHub.lastLoopEpochMs?.let { jo.addProperty("loopMs", it) }
+                loopHub.variableSensInUnits?.let { jo.addProperty("isf", it) }
             }
             joa.add(jo)
         }

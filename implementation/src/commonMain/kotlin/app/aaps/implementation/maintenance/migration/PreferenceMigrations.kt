@@ -496,7 +496,9 @@ class PreferenceMigrations(
             "InsulinOrefRapidActingPlugin",
             "InsulinOrefUltraRapidActingPlugin",
             "InsulinOrefFreePeakPlugin",
-            "InsulinLyumjevPlugin"
+            "InsulinLyumjevPlugin",
+            "InsulinLyumjevU100PDPlugin",
+            "InsulinLyumjevU200PDPlugin"
         )
 
         val PRESETS = listOf(

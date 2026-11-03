@@ -6,11 +6,15 @@ import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.maintenance.ImportExportPrefs
 import app.aaps.core.interfaces.maintenance.Prefs
+import app.aaps.core.interfaces.notifications.NotificationId
+import app.aaps.core.interfaces.notifications.NotificationManager
 import app.aaps.core.interfaces.sharedPreferences.KeyValueStore
 import app.aaps.core.interfaces.utils.DateUtil
+import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.KeyCategory
 import app.aaps.core.keys.LongComposedKey
 import app.aaps.core.keys.ResolvedKey
+import app.aaps.core.keys.StringNonKey
 import app.aaps.core.keys.interfaces.BooleanComposedNonPreferenceKey
 import app.aaps.core.keys.interfaces.BooleanNonPreferenceKey
 import app.aaps.core.keys.interfaces.DoubleComposedNonPreferenceKey
@@ -26,6 +30,7 @@ import app.aaps.core.keys.interfaces.StringNonPreferenceKey
 import app.aaps.core.keys.interfaces.SyncDirection
 import app.aaps.core.keys.interfaces.UnitDoublePreferenceKey
 import app.aaps.implementation.maintenance.migration.FileKeyValueStore
+import app.aaps.implementation.maintenance.migration.InsulinMigration
 import app.aaps.implementation.maintenance.migration.PreferenceMigrations
 import app.aaps.implementation.sharedPreferences.PreferenceKeyResolverFactory
 import dev.zacsweers.metro.Inject
@@ -67,7 +72,9 @@ class PreferenceImportApplier(
     private val config: Config,
     private val aapsLogger: AAPSLogger,
     private val dateUtil: DateUtil,
-    private val migrations: PreferenceMigrations
+    private val migrations: PreferenceMigrations,
+    private val insulinMigration: InsulinMigration,
+    private val notificationManager: NotificationManager
 ) {
 
     /** Works out what would change, and writes nothing. For the confirm screen. */
@@ -87,8 +94,14 @@ class PreferenceImportApplier(
      */
     suspend fun apply(prefs: Prefs, keepPumpSettings: Boolean): ImportExportPrefs.ImportOutcome {
         val migrated = FileKeyValueStore(prefs.values)
+        // Before migrate(), which deletes the names this reads.
+        val insulin = insulinMigration.importedInsulin(migrated, StringNonKey.InsulinConfiguration.key)
+        insulin?.let { migrated.putString(StringNonKey.InsulinConfiguration.key, it.catalogue) }
         migrations.migrate(migrated)
-        return run(migrated.asTextMap(), keepPumpSettings, write = true)
+        val outcome = run(migrated.asTextMap(), keepPumpSettings, write = true)
+        // A client leaves the list to the master, so it has nothing to check.
+        if (!config.AAPSCLIENT) insulin?.notice?.let { notificationManager.post(id = NotificationId.INSULIN_MIGRATION_DEFAULT_USED, text = it) }
+        return outcome
     }
 
     private fun run(values: Map<String, String>, keepPumpSettings: Boolean, write: Boolean): ImportExportPrefs.ImportOutcome {

@@ -20,4 +20,6 @@ enum class BooleanComposedKey(
      */
     WidgetUseBlack("widget_use_black_", "%d", false),
     ConfigBuilderEnabled("ConfigBuilder_Enabled_", "%s", false),
+    // Boost
+    BoostV5AutoConfigResolved("boost_v5_autoconfig_resolved_", "%s", false)
 }

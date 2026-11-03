@@ -336,6 +336,46 @@ class EventDataTest {
         assertThat(restored.loopMode).isEqualTo(LoopStatusData.LoopMode.UNKNOWN)
     }
 
+    private fun boostStatus(variableSens: String, tirWeights: String) = EventData.Status(
+        dataset = 0, externalStatus = "st", iobSum = "1", iobDetail = "2", cob = "3", currentBasal = "4",
+        battery = "5", rigBattery = "6", openApsStatus = 7L, bgi = "8", batteryLevel = 9, patientName = "p",
+        tempTarget = "t", tempTargetLevel = 1, tempTargetDuration = 10L, reservoirString = "r",
+        reservoir = 11.0, reservoirLevel = 0, cobValue = 12.0, loopMode = LoopStatusData.LoopMode.CLOSED,
+        modeEndTime = 13L, modeFromScene = true, variableSens = variableSens, tirWeights = tirWeights
+    )
+
+    @Test
+    fun boostStatusFieldsCrossTheWire() {
+        // JSON is what the phone sends to the watch; ProtoBuf is what the watch stores in its DataStore
+        boostStatus(variableSens = "2.7", tirWeights = "1,4,80,12,3").let {
+            assertThat(EventData.deserialize(it.serialize())).isEqualTo(it)
+            assertThat(EventData.deserializeByte(it.serializeByte())).isEqualTo(it)
+        }
+    }
+
+    @Test
+    fun statusFromPeerWithoutBoostFieldsDecodesWithEmptyDefaults() {
+        // A phone without Boost sends Status without these keys; the watch must still decode it
+        val status = boostStatus(variableSens = "2.7", tirWeights = "1,4,80,12,3")
+        val legacyJson = status.serialize()
+            .replaceFirst(",\"variableSens\":\"2.7\"", "")
+            .replaceFirst(",\"tirWeights\":\"1,4,80,12,3\"", "")
+        assertThat(legacyJson).doesNotContain("variableSens")
+        assertThat(legacyJson).doesNotContain("tirWeights")
+        val restored = EventData.deserialize(legacyJson) as EventData.Status
+        assertThat(restored.variableSens).isEmpty()
+        assertThat(restored.tirWeights).isEmpty()
+        assertThat(restored).isEqualTo(status.copy(variableSens = "", tirWeights = ""))
+    }
+
+    @Test
+    fun statusWithBoostFieldsDecodesOnPeerThatIgnoresThem() {
+        // An older watch app tolerates unknown keys; emulate it by renaming the Boost keys to unknown ones
+        val status = boostStatus(variableSens = "2.7", tirWeights = "1,4,80,12,3")
+        val renamed = status.serialize().replace("\"variableSens\"", "\"futureA\"").replace("\"tirWeights\"", "\"futureB\"")
+        assertThat(EventData.deserialize(renamed)).isEqualTo(status.copy(variableSens = "", tirWeights = ""))
+    }
+
     @Test
     fun wizardPreCheckFromAWatchWithoutTheMealTypeIsBread() {
         // The meal type came later. A watch from before sends no carbsType, and the default is bread, which

@@ -126,7 +126,11 @@ class Converters {
     fun fromAlgorithm(algorithm: APSResult.Algorithm?) = algorithm?.name
 
     @TypeConverter
-    fun toAlgorithm(algorithm: String?) = algorithm?.let { APSResult.Algorithm.valueOf(it) }
+    // An algorithm name this build does not know (a row written by a build with an extra plugin)
+    // reads back as UNKNOWN rather than throwing while the whole table is loaded.
+    fun toAlgorithm(algorithm: String?) = algorithm?.let {
+        try { APSResult.Algorithm.valueOf(it) } catch (_: IllegalArgumentException) { APSResult.Algorithm.UNKNOWN }
+    }
 
     // The profile blocks used to go through org.json, which exists only on Android. kotlinx writes the
     // same keys and reads either form; it differs only in printing a whole double as "1.0" where

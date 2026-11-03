@@ -108,9 +108,22 @@ internal class DataSyncWorkerTest : TestBase() {
     }
 
     @Test
+    fun `an upload during a load does not end the full sync`() = runTest(timeout = 30.seconds) {
+        sut = buildSut()
+        whenever(nsClientV3Plugin.doingFullSync).thenReturn(true)
+        whenever(nsClientV3Plugin.fullSyncShouldEnd).thenReturn(false)
+        whenever(nsClientV3Plugin.hasWritePermission).thenReturn(true)
+
+        sut.doWorkAndLog()
+
+        verify(nsClientV3Plugin, never()).endFullSync()
+    }
+
+    @Test
     fun `doWorkAndLog ends full sync when doingFullSync is true`() = runTest(timeout = 30.seconds) {
         sut = buildSut()
         whenever(nsClientV3Plugin.doingFullSync).thenReturn(true)
+        whenever(nsClientV3Plugin.fullSyncShouldEnd).thenReturn(true)
         whenever(nsClientV3Plugin.hasWritePermission).thenReturn(true)
 
         val result = sut.doWorkAndLog()
@@ -170,6 +183,7 @@ internal class DataSyncWorkerTest : TestBase() {
         assertIs<Success>(sut.doWorkAndLog())
 
         whenever(nsClientV3Plugin.doingFullSync).thenReturn(true)
+        whenever(nsClientV3Plugin.fullSyncShouldEnd).thenReturn(true)
         assertIs<Success>(sut.doWorkAndLog())
     }
 

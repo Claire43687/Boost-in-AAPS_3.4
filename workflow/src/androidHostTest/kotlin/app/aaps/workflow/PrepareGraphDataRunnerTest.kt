@@ -32,7 +32,9 @@ import org.mockito.Mock
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.argumentCaptor
+import org.mockito.kotlin.atLeastOnce
 import org.mockito.kotlin.eq
+import org.mockito.kotlin.inOrder
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
@@ -51,6 +53,7 @@ class PrepareGraphDataRunnerTest : TestBaseWithProfile() {
     @Mock lateinit var cache: OverviewDataCache
     @Mock lateinit var overviewData: OverviewData
     @Mock lateinit var signals: CalculationSignalsEmitter
+    @Mock lateinit var loopTrigger: CalculationLoopTrigger
 
     private val autosensDataProvider = { mock<AutosensData>() }
 
@@ -58,13 +61,13 @@ class PrepareGraphDataRunnerTest : TestBaseWithProfile() {
         PrepareGraphDataRunner(
             aapsLogger, workflowChainData, dateUtil, mockedRxBus, persistenceLayer,
             activePlugin, profileFunction, profileUtil, preferences, profiler, decimalFormatter,
-            TestScope(), autosensDataProvider
+            TestScope(), loopTrigger, autosensDataProvider
         )
 
     // The runner asks this between phases; nothing in these tests stops a run part way.
     private suspend fun run() = runner().run(job = "main", generation = 1L, isStopped = { false })
 
-    private fun buildData(bgDataReload: Boolean, emitFinalProgress: Boolean) =
+    private fun buildData(bgDataReload: Boolean, emitFinalProgress: Boolean, invokeLoop: Boolean = false) =
         PrepareGraphData(
             iobCobCalculator = dataIobCob,
             overviewData = overviewData,
@@ -75,7 +78,8 @@ class PrepareGraphDataRunnerTest : TestBaseWithProfile() {
             bgDataReload = bgDataReload,
             limitDataToOldestAvailable = false,
             triggeredByNewBG = false,
-            emitFinalProgress = emitFinalProgress
+            emitFinalProgress = emitFinalProgress,
+            invokeLoop = invokeLoop
         )
 
     @BeforeEach
@@ -187,7 +191,7 @@ class PrepareGraphDataRunnerTest : TestBaseWithProfile() {
         whenever(profileFunction.getProfile(any<Long>())).thenReturn(effectiveProfile)
         whenever(dataIobCob.calculateFromTreatmentsAndTemps(any(), any())).thenAnswer { IobTotal(it.arguments[0] as Long, activity = 0.01) }
         whenever(dataIobCob.calculateAbsoluteIobFromBaseBasals(any())).thenAnswer { IobTotal(it.arguments[0] as Long) }
-        whenever(workflowChainData.prepareFor(anyOrNull(), any())).thenReturn(buildData(bgDataReload = false, emitFinalProgress = false))
+        whenever(workflowChainData.prepareFor(any(), any())).thenReturn(buildData(bgDataReload = false, emitFinalProgress = false))
 
         run()
 
@@ -219,5 +223,28 @@ class PrepareGraphDataRunnerTest : TestBaseWithProfile() {
         assertThat(readings.lastValue.single().utcOffset).isEqualTo(gv.utcOffset)
         // Terminal-only progress not emitted when emitFinalProgress = false
         verify(signals, never()).emitProgress(eq(ProgressData.DRAW_FINAL), any())
+    }
+    @Test
+    fun `a main chain starts the loop after iob and before the graph-only iob autosens data`() = runTest {
+        stubSuspendCalls()
+        whenever(workflowChainData.prepareFor(any(), any())).thenReturn(buildData(bgDataReload = false, emitFinalProgress = false, invokeLoop = true))
+
+        val result = run()
+
+        assertIs<WorkOutcome.Success>(result)
+        val order = inOrder(loopTrigger, signals)
+        order.verify(signals).emitProgress(eq(ProgressData.DRAW_BG), any())
+        order.verify(loopTrigger).invokeIfNewBg()
+        order.verify(signals, atLeastOnce()).emitProgress(eq(ProgressData.PREPARE_IOB_AUTOSENS_DATA), any())
+    }
+
+    @Test
+    fun `a history chain does not start the loop`() = runTest {
+        stubSuspendCalls()
+        whenever(workflowChainData.prepareFor(any(), any())).thenReturn(buildData(bgDataReload = false, emitFinalProgress = true))
+
+        run()
+
+        verify(loopTrigger, never()).invokeIfNewBg()
     }
 }

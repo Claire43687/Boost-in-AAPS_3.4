@@ -148,7 +148,7 @@ class ObjectivesViewModel(
                 description = rh.gs(objective.objective),
                 gate = rh.gs(objective.gate),
                 state = state,
-                accomplishedOn = if (objective.isAccomplished) rh.gs(ConstraintsStrings.accomplished, dateUtil.dateAndTimeString(objective.accomplishedOn)) else null,
+                accomplishedOn = if (objective.isAccomplished && objective.accomplishedOn != 0L) rh.gs(ConstraintsStrings.accomplished, dateUtil.dateAndTimeString(objective.accomplishedOn)) else null,
                 tasks = tasks,
                 completedTaskCount = completedCount,
                 totalTaskCount = totalCount,

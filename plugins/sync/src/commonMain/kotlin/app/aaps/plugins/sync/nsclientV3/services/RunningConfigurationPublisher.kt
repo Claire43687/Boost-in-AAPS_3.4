@@ -224,6 +224,11 @@ class RunningConfigurationPublisher(
 
     /** True when Nightscout took the doc. */
     private suspend fun putSettings(identifier: String, runningConfig: JsonObject): Boolean {
+        // False, so the cold doc is tried again and reaches Nightscout once upload is back on.
+        if (!preferences.get(BooleanKey.NsClientUploadData)) {
+            aapsLogger.debug(LTag.NSCLIENT, "updateSettings($identifier) skipped: upload is off")
+            return false
+        }
         val client = nsClientV3Plugin().nsAndroidClient ?: run {
             aapsLogger.debug(LTag.NSCLIENT, "updateSettings($identifier) skipped: no Nightscout client yet")
             return false

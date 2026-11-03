@@ -31,7 +31,8 @@ enum class StringKey(
     override val validator: StringValidator = StringValidator.NONE,
     override val visibility: ElementVisibility = ElementVisibility.ALWAYS,
     override val enabledCondition: PreferenceEnabledCondition = PreferenceEnabledCondition.ALWAYS,
-    override val sync: SyncSpec? = null
+    override val sync: SyncSpec? = null,
+    override val exportable: Boolean = true
 ) : StringPreferenceKey {
 
     GeneralUnits(
@@ -226,6 +227,32 @@ enum class StringKey(
         validator = StringValidator.minLength(17)
     ),
 
+    // Boost
+    ApsBoostStartTime(key = "boost_start_time", defaultValue = "07:00", title = KeysStrings.pref_title_boost_start_time, defaultedBySM = true),
+    ApsBoostEndTime(key = "boost_end_time", defaultValue = "07:01", title = KeysStrings.pref_title_boost_end_time, defaultedBySM = true),
+    ApsBoostNightModeStart(key = "boost_night_mode_start", defaultValue = "22:00", title = KeysStrings.pref_title_boost_night_mode_start, summary = KeysStrings.pref_summary_boost_night_mode_start, defaultedBySM = true),
+    ApsBoostNightModeEnd(key = "boost_night_mode_end", defaultValue = "07:00", title = KeysStrings.pref_title_boost_night_mode_end, summary = KeysStrings.pref_summary_boost_night_mode_end, defaultedBySM = true),
+    ApsBoostV5State(key = "boost_v5_state", defaultValue = "", title = KeysStrings.pref_title_boost_v5_state, defaultedBySM = true),
+    ApsBoostVwaTddShadowState(key = "boost_vwa_tdd_shadow_state", defaultValue = "", title = KeysStrings.pref_title_boost_vwa_tdd_shadow_state, defaultedBySM = true),
+    ApsBoostLastEngineMode(key = "boost_last_engine_mode", defaultValue = "", title = KeysStrings.pref_title_boost_last_engine_mode, defaultedBySM = true),
+    ApsBoostLastUseTdd(key = "boost_last_use_tdd", defaultValue = "", title = KeysStrings.pref_title_boost_last_use_tdd, defaultedBySM = true),
+    ApsBoostSleepState(key = "boost_sleep_state", defaultValue = "", title = KeysStrings.pref_title_boost_sleep_state, defaultedBySM = true),
+    ApsBoostSleepHistory(key = "boost_sleep_history", defaultValue = "", title = KeysStrings.pref_title_boost_sleep_history, defaultedBySM = true),
+    ApsBoostMlRingBuffer(key = "boost_ml_ring_buffer", defaultValue = "", title = KeysStrings.pref_title_boost_ml_ring_buffer, defaultedBySM = true),
+    ApsBoostTrialSeed(key = "boost_trial_seed", defaultValue = "", title = KeysStrings.pref_title_boost_trial_seed, defaultedBySM = true),
+    ApsBoostMealTimeHistory(key = "boost_meal_time_history", defaultValue = "", title = KeysStrings.pref_title_boost_meal_time_history, defaultedBySM = true),
+    ApsBoostDailyStepHistory(key = "boost_daily_step_history", defaultValue = "", title = KeysStrings.pref_title_boost_daily_step_history, defaultedBySM = true),
+    ApsBoostIntradayStepBank(key = "boost_intraday_step_bank", defaultValue = "", title = KeysStrings.pref_title_boost_intraday_step_bank, defaultedBySM = true),
+    ApsBoostV5AutoConfigSummary(key = "boost_v5_autoconfig_summary", defaultValue = "", title = KeysStrings.pref_title_boost_v5_autoconfig_summary, defaultedBySM = true),
+    ApsBoostV5RedriveBaseline(key = "boost_v5_redrive_baseline", defaultValue = "", title = KeysStrings.pref_title_boost_v5_redrive_baseline, defaultedBySM = true),
+    ApsBoostV5AutoConfigPending(key = "boost_v5_autoconfig_pending", defaultValue = "", title = KeysStrings.pref_title_boost_v5_autoconfig_pending, defaultedBySM = true),
+    // JSON map {prefKey: value} of the value auto-config last wrote to a knob it sets as an absolute
+    // value (the confirm-tranche threshold). A stored value that differs from it and from the factory
+    // default was set by hand and is kept. Never read for dosing.
+    ApsBoostV5AutoConfigWritten(key = "boost_v5_autoconfig_written", defaultValue = "", title = KeysStrings.pref_title_boost_v5_autoconfig_pending, defaultedBySM = true),
+    ApsBoostV5RedriveSummary(key = "boost_v5_redrive_summary", defaultValue = "", title = KeysStrings.pref_title_boost_v5_redrive_summary, defaultedBySM = true),
+    ApsBoostV5RedriveHistory(key = "boost_v5_redrive_history", defaultValue = "", title = KeysStrings.pref_title_boost_v5_redrive_history, defaultedBySM = true),
+    ApsBoostHistorySyncSummary(key = "boost_history_sync_summary", defaultValue = "", title = KeysStrings.pref_title_boost_history_sync_summary, defaultedBySM = true, exportable = false),
     ;
 
     override val entries: Map<String, TextRef> =

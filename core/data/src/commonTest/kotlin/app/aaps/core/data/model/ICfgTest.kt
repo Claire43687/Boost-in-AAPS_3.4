@@ -106,6 +106,7 @@ class ICfgTest {
         assertFalse(base.hasSameCurve(ICfg(insulinLabel = "x", peak = 55, dia = 8.0, concentration = 1.0)))
         assertFalse(base.hasSameCurve(ICfg(insulinLabel = "x", peak = 75, dia = 8.0, concentration = 2.0)))
         assertFalse(base.hasSameCurve(null))
+        assertFalse(base.hasSameCurve(base.copy(model = InsulinModel.LYUMJEV_PD)))
     }
 
     @Test

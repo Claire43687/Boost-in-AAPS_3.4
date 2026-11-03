@@ -117,8 +117,9 @@ open class OpenAPSSMBPlugin(
         .pluginName(ApsStrings.openapssmb)
         .preferencesVisibleInSimpleMode(false)
         .showInList { config.APS || config.AAPSCLIENT }   // AAPSCLIENT: visible so a client can select the master's APS
-        .description(ApsStrings.description_smb)
-        .setDefault(),
+        .description(ApsStrings.description_smb),
+    // Boost: .setDefault() moved to OpenAPSBoostV5Plugin (Boost V6), as in Boost 6.1.2. Exactly one
+    // APS plugin may be the default.
     ownPreferences = ApsIntentKey.entries,
     aapsLogger, rh, preferences, notificationManager
 ), APS, PluginConstraints {

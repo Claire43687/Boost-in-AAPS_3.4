@@ -6,6 +6,8 @@
     <string name="pref_summary_insulin_concentration">Enable support for different insulin concentrations (U50, U200, etc.)</string>
 
     <!-- Overview preferences -->
+    <string name="pref_title_use_boost_overview_v2">Open the Boost overview at start</string>
+    <string name="pref_summary_use_boost_overview_v2">Show the Boost V2 overview when the app opens. Back returns to the standard overview.</string>
     <string name="pref_title_keep_screen_on">Keep screen on</string>
     <string name="pref_summary_keep_screen_on">Prevent Android to turn screen off. It will consume lot of energy when not plugged to power outlet.</string>
     <string name="pref_title_show_treatment_button">Show treatment button</string>
@@ -428,4 +430,161 @@
 
     <!--    Appearance preferences-->
 
+
+    <!-- Boost -->
+    <string name="pref_title_aps_loop_at_native_cadence">Loop at sensor cadence</string>
+    <string name="pref_summary_aps_loop_at_native_cadence">Run the loop on every sensor reading rather than once per five minutes. No effect on a five-minute sensor. On a one-minute sensor this makes the loop run every minute, which also allows more frequent SMBs.</string>
+    <string name="pref_title_boost_activity_pct">Activity Profile Percent</string>
+    <string name="pref_title_boost_activity_shadow_enabled">Activity-load shadow (steps)</string>
+    <string name="pref_title_boost_activity_steps_15">15-Minute Activity Steps</string>
+    <string name="pref_title_boost_activity_steps_30">30-Minute Activity Steps</string>
+    <string name="pref_title_boost_activity_steps_5">5-Minute Activity Steps</string>
+    <string name="pref_title_boost_activity_steps_60">60-Minute Activity Steps</string>
+    <string name="pref_title_boost_adjust_sensitivity">Enable TDD sensitivity adjustment</string>
+    <string name="pref_title_boost_allow_all_bg_sources">Allow all BG sources</string>
+    <string name="pref_title_boost_allow_with_high_tt">Allow Boost with High Temp Targets</string>
+    <string name="pref_title_boost_autosens_when_no_tdd">Use traditional Autosens when TDD is off</string>
+    <string name="pref_title_boost_bolus_cap">Boost Bolus Cap</string>
+    <string name="pref_title_boost_bypass_version_check">Bypass version check</string>
+    <string name="pref_title_boost_cumulative_smb_cap_60min">Cumulative SMB cap (60 min)</string>
+    <string name="pref_title_boost_daily_step_history">Daily step history (internal)</string>
+    <string name="pref_title_boost_dynisf_adjustment" formatted="false">TDD adjustment factor (%)</string>
+    <string name="pref_title_boost_dynisf_bg_cap">DynISF BG cap</string>
+    <string name="pref_title_boost_dynisf_normal_target">DynISF normal target</string>
+    <string name="pref_title_boost_dynisf_velocity" formatted="false">BG impact on ISF (%)</string>
+    <string name="pref_title_boost_enable_circadian_isf">Enable Circadian ISF</string>
+    <string name="pref_title_boost_end_time">Boost end time</string>
+    <string name="pref_title_boost_health_connect_hr_enabled">Use Health Connect for HR</string>
+    <string name="pref_title_boost_health_connect_poll_min">Health Connect poll interval (minutes)</string>
+    <string name="pref_title_boost_history_sync_summary">History sync summary (internal)</string>
+    <string name="pref_title_boost_hr_integration_enabled">Enable HR Integration</string>
+    <string name="pref_title_boost_hr_max_bpm">Maximum Heart Rate (HRmax)</string>
+    <string name="pref_title_boost_hr_resting_bpm">Resting Heart Rate</string>
+    <string name="pref_title_boost_hr_stress_detection">Enable Stress Detection</string>
+    <string name="pref_title_boost_hr_window_minutes">HR Averaging Window (minutes)</string>
+    <string name="pref_title_boost_inactivity_pct">Inactivity Profile Percent</string>
+    <string name="pref_title_boost_inactivity_steps">Inactivity Step Count</string>
+    <string name="pref_title_boost_insulin_req_pct" formatted="false">SMB insulin required %</string>
+    <string name="pref_title_boost_intraday_step_bank">Intraday step bank (internal)</string>
+    <string name="pref_title_boost_last_engine_mode">Last engine mode (internal)</string>
+    <string name="pref_title_boost_last_use_tdd">Last use-TDD setting (internal)</string>
+    <string name="pref_title_boost_max_iob">Boost Max IOB</string>
+    <string name="pref_title_boost_meal_time_history">Meal-time history (internal)</string>
+    <string name="pref_title_boost_ml_ring_buffer">ML ring buffer (internal)</string>
+    <string name="pref_title_boost_night_mode_auto_by_sleep">Auto-detect sleep (HR + steps)</string>
+    <string name="pref_title_boost_night_mode_bg_offset">Night Mode BG Offset</string>
+    <string name="pref_title_boost_night_mode_disable_with_cob">Disable Night Mode when COB > 0</string>
+    <string name="pref_title_boost_night_mode_disable_with_low_tt">Disable Night Mode with low temp target</string>
+    <string name="pref_title_boost_night_mode_enabled">Enable Night Mode</string>
+    <string name="pref_title_boost_night_mode_end">Night Mode End Time</string>
+    <string name="pref_title_boost_night_mode_start">Night Mode Start Time</string>
+    <string name="pref_title_boost_post_exercise_min_duration">Minimum Exercise Duration (min)</string>
+    <string name="pref_title_boost_post_exercise_recovery_enabled">Enable Post-Exercise Recovery</string>
+    <string name="pref_title_boost_post_exercise_recovery_hours">Recovery Window Duration (hours)</string>
+    <string name="pref_title_boost_post_exercise_recovery_scale">SMB Reduction Factor</string>
+    <string name="pref_title_boost_post_exercise_recovery_target">Recovery TempTarget</string>
+    <string name="pref_title_boost_postrescue_tight_ramp_trial">Post-rescue tight-ramp trial</string>
+    <string name="pref_title_boost_pre_sleep_lead_min">Pre-sleep lead time (minutes)</string>
+    <string name="pref_title_boost_scale_value">Boost Scale Value</string>
+    <string name="pref_title_boost_sleep_history">Sleep history (internal)</string>
+    <string name="pref_title_boost_sleep_hysteresis_min">Sleep confirmation window (minutes)</string>
+    <string name="pref_title_boost_sleep_in_hours">Sleep-in Hours</string>
+    <string name="pref_title_boost_sleep_in_steps">Sleep-in Steps</string>
+    <string name="pref_title_boost_sleep_state">Sleep state (internal)</string>
+    <string name="pref_title_boost_start_time">Boost start time</string>
+    <string name="pref_title_boost_trial_seed">Trial seed (internal)</string>
+    <string name="pref_title_boost_use_tdd">Enable TDD-based ISF</string>
+    <string name="pref_title_boost_v2_chart_faithful">Use faithful V2 chart style</string>
+    <string name="pref_title_boost_v5_active_dosing">Active dosing</string>
+    <string name="pref_title_boost_v5_aggression">Aggression</string>
+    <string name="pref_title_boost_v5_aggressive_early_confirm">Aggressive early confirm</string>
+    <string name="pref_title_boost_v5_autoconfig_done">Auto-config done (internal)</string>
+    <string name="pref_title_boost_v5_autoconfig_pending">Auto-config pending (internal)</string>
+    <string name="pref_title_boost_v5_autoconfig_summary">Auto-config summary (internal)</string>
+    <string name="pref_title_boost_v5_committed_cap_u">Committed dose cap (U)</string>
+    <string name="pref_title_boost_v5_composed_floor_active">Phase-3 composed brake floor</string>
+    <string name="pref_title_boost_v5_confirm_tranche">Confirm tranche</string>
+    <string name="pref_title_boost_v5_confirmed_cap_u">Confirmed dose cap (U)</string>
+    <string name="pref_title_boost_v5_fast_carb_confirm">Fast-carb fast-path</string>
+    <string name="pref_title_boost_v5_hypo_caution">Hypo Caution</string>
+    <string name="pref_title_boost_v5_primer_bolus_mode">Force bolus primer</string>
+    <string name="pref_title_boost_v5_primer_cap_u">Acceleration primer (U)</string>
+    <string name="pref_title_boost_v5_primer_tbr_fallback">Primer TBR fallback</string>
+    <string name="pref_title_boost_v5_redrive_baseline">Re-drive baseline (internal)</string>
+    <string name="pref_title_boost_v5_redrive_history">Re-drive history (internal)</string>
+    <string name="pref_title_boost_v5_redrive_summary">Re-drive summary (internal)</string>
+    <string name="pref_title_boost_v5_sensitivity">Meal-detection Sensitivity</string>
+    <string name="pref_title_boost_v5_state">State (internal)</string>
+    <string name="pref_title_boost_v5_tranche_fraction">Confirm tranche: fraction given immediately</string>
+    <string name="pref_title_boost_v5_tranche_threshold">Confirm tranche: release threshold</string>
+    <string name="pref_title_boost_v5_velocity_budget_active">Velocity-budget floor (high tail)</string>
+    <string name="pref_title_boost_v6_pre_meal_lead_min">Pre-meal lead time (min)</string>
+    <string name="pref_title_boost_v6_pre_meal_target">Anticipatory pre-meal target</string>
+    <string name="pref_title_boost_v6_pre_meal_target_mgdl">Pre-meal target (mg/dL)</string>
+    <string name="pref_title_boost_vwa_tdd_shadow_state">VWA TDD shadow state (internal)</string>
+    <string name="pref_title_boost_wake_hr_hysteresis_min">Wake confirmation window (minutes)</string>
+    <string name="pref_summary_boost_insulin_req_pct">Percentage of algorithm-determined insulin to deliver as SMB. Default: 50</string>
+    <string name="pref_summary_boost_bolus">Maximum individual bolus from Boost. Default: 2.5 U</string>
+    <string name="pref_summary_boost_scale">Multiplier for calculated Boost insulin. Values &gt;=3 disable Boost. Default: 1.0</string>
+    <string name="pref_summary_boost_max_iob">Maximum IOB for accelerated bolusing. Above this, regular oref1 used. Default: 1.0 U</string>
+    <string name="pref_summary_boost_enable_circadian_isf">Applies time-of-day ISF adjustment based on circadian rhythm model</string>
+    <string name="pref_summary_boost_allow_with_high_tt">Allow Boost when high temp target is active (exercise)</string>
+    <string name="pref_summary_boost_use_tdd">Calculate ISF from Total Daily Dose using the logarithmic formula. When disabled, uses profile ISF directly</string>
+    <string name="pref_summary_boost_adjust_sensitivity">Adjust sensitivity ratio using 24h TDD / 7D TDD, similar to Autosens. Needs TDD-based ISF, and is switched off automatically when TDD-based ISF is off and when Boost is first enabled. Recommended to start with this off</string>
+    <string name="pref_summary_boost_autosens_when_no_tdd">When TDD-based ISF is off, let Autosens adjust basal, target and CR. Requires Autosens enabled. When this is off as well, no sensitivity adjustment is applied. No effect when TDD-based ISF is on, since TDD owns sensitivity then.</string>
+    <string name="pref_summary_boost_dyn_isf_normal_target">Reference BG target for ISF calculation. Default: 99</string>
+    <string name="pref_summary_boost_dyn_isf_velocity" formatted="false">Controls how much your current blood glucose level affects ISF. At 100%, ISF is fully adjusted by BG (higher BG = stronger ISF). At 50%, only half the BG-driven adjustment is applied. At 0%, BG has no effect and ISF stays at the target-level value regardless of current BG. Needs TDD-based ISF: set to 0 automatically when TDD-based ISF is switched off, and to 100 when it is switched on. Default: 100</string>
+    <string name="pref_summary_boost_dyn_isf_bg_cap">BG above this value is softened to reduce ISF aggressiveness at very high BG. Default: 210</string>
+    <string name="pref_summary_boost_dyn_isf_adjustment_factor">Scale the calculated TDD by this percentage. Default: 100</string>
+    <string name="pref_summary_boost_inactivity_steps">Steps/hour below which user is inactive. Default: 500</string>
+    <string name="pref_summary_boost_inactivity_pct">Profile percentage when inactive. Default: 130</string>
+    <string name="pref_summary_boost_sleep_in_hours">Hours after Boost start to allow sleep-in. Default: 2</string>
+    <string name="pref_summary_boost_sleep_in_steps">Steps/hour below which user is considered still sleeping. Default: 250</string>
+    <string name="pref_summary_boost_activity_steps5">Steps in 5 min above which user is active. Default: 420</string>
+    <string name="pref_summary_boost_activity_steps15">Steps in 15 min above which user is active. Default: 800</string>
+    <string name="pref_summary_boost_activity_steps30">Steps in 30 min above which user is active. Default: 1200</string>
+    <string name="pref_summary_boost_activity_steps60">Steps in 60 min above which user is active. Default: 1800</string>
+    <string name="pref_summary_boost_activity_pct">Profile percentage when active. Default: 80</string>
+    <string name="pref_summary_boost_hr_integration_enabled">Use heart rate data to classify exercise type (aerobic vs resistance) and confirm step-count signals. Requires a wearable sending HR data to AAPS. Feature is opt-in and falls back to step-only detection if no recent HR data is available.</string>
+    <string name="pref_summary_boost_hr_max_bpm">Your maximum heart rate in BPM used for Karvonen zone calculation. Standard estimate: 220 minus age. Default 180 bpm is conservative for adults when age is unknown. Range 150–220.</string>
+    <string name="pref_summary_boost_hr_resting_bpm">Your resting heart rate in BPM used for Karvonen Heart Rate Reserve method. Measure on waking before getting up. Default 60 bpm. Range 30–100.</string>
+    <string name="pref_summary_boost_hr_window_minutes">How many minutes of recent HR data to average for exercise classification. Default 15 min gives a stable reading. Range 5–60 min.</string>
+    <string name="pref_summary_boost_hr_stress_detection">Detect elevated HR without movement as possible stress or illness. Reduces insulin aggressiveness (raises target) when HR is in zone 2+ but steps are very low. Separate opt-in; disable if you experience false positives.</string>
+    <string name="pref_summary_boost_post_exercise_recovery_enabled">Automatically set a high TempTarget and reduce SMB aggressiveness after exercise to guard against delayed hypoglycemia</string>
+    <string name="pref_summary_boost_post_exercise_recovery_hours">How long the recovery TempTarget and SMB reduction remain active after exercise ends. Evidence supports 1–4h; default 2h covers the primary risk window (Riddell et al.)</string>
+    <string name="pref_summary_boost_post_exercise_recovery_target">BG target during recovery window. ATTD 2020 consensus recommends 7–10 mmol/L (126–180 mg/dL) after aerobic exercise; default 8.0 mmol/L / 144 mg/dL</string>
+    <string name="pref_summary_boost_post_exercise_recovery_scale" formatted="false">Multiplier (0.0–1.0) applied to boost_bolus and boost_scale during the recovery window. 0.5 = 50% reduction. Applies even if TempTarget is cancelled manually.</string>
+    <string name="pref_summary_boost_post_exercise_min_duration">Recovery only triggers if exercise was detected for at least this many minutes. Avoids false triggers from brief activity bursts. Default: 10 min.</string>
+    <string name="pref_summary_boost_night_mode_enabled">Disable SMBs during night hours when BG is near target</string>
+    <string name="pref_summary_boost_night_mode_start">Start of Night Mode window (24h format HH:mm). Default: 22:00</string>
+    <string name="pref_summary_boost_night_mode_end">End of Night Mode window (24h format HH:mm). Default: 07:00</string>
+    <string name="pref_summary_boost_night_mode_bg_offset">SMBs are disabled when BG is below the profile target plus this offset. Default: 1.5 mmol/L (27 mg/dL)</string>
+    <string name="pref_summary_boost_night_mode_disable_with_cob">Allow SMBs during Night Mode if carbs are on board</string>
+    <string name="pref_summary_boost_night_mode_disable_with_low_tt">Allow SMBs during Night Mode when temp target is below profile target</string>
+    <string name="pref_summary_boost_night_mode_auto_by_sleep">When ON, sleep state (heart rate + steps) drives Night Mode in addition to the time window. Engages early (PRE_SLEEP) ApsBoostPreSleepLeadMin before nightStart to limit IOB before bed; stays active past nightEnd if still sleeping. Wake requires BOTH HR rise and step activity (BG trend alone does not wake). Requires a HR source (Wear OS / Garmin).</string>
+    <string name="pref_summary_boost_pre_sleep_lead_min">How many minutes before Night Mode Start to enter PRE_SLEEP and engage Night Mode SMB suppression. Default 60.</string>
+    <string name="pref_summary_boost_sleep_hysteresis_min">HR + steps conditions must hold for this many minutes before SLEEPING is confirmed. Default 10.</string>
+    <string name="pref_summary_boost_wake_hr_hysteresis_min">HR > 1.25× resting AND steps ≥ 100 must both hold for this many minutes before exiting SLEEPING. Default 5.</string>
+    <string name="pref_summary_boost_health_connect_hr_enabled">Reads heart rate from Android Health Connect on a polling cadence. Lets Garmin Connect / Wear OS HR flow into Boost continuously (including overnight) without needing the watch field to be actively pulling glucose. Requires the user to install Health Connect (on Android &lt; 14) and grant Read Heart Rate permission. Open Health Connect settings to grant.</string>
+    <string name="pref_summary_boost_health_connect_poll_min">How often to query Health Connect for new HR records. Lower = fresher data, slightly more battery. Default 5.</string>
+    <string name="pref_summary_boost_activity_shadow_enabled" formatted="false">Logging only: never changes dosing. Reads daily steps from Health Connect (single source, de-duplicated), learns your personal step baseline, and logs to Nightscout what an activity/inactivity sensitivity modifier WOULD do (e.g. \"wouldΔISF +12%\" after a high-activity day). Needs Health Connect Read Steps permission granted. For data-gathering ahead of a future feature.</string>
+    <string name="pref_summary_boost_cumulative_smb_cap60_min">Total SMB insulin (U) that may be delivered in any rolling 60-minute window. Caps insulin stacking during sustained climbs. Set to 0 to disable. Factory default: 10 U (non-binding); auto-configuration tightens it to your own history (Confirmed cap + 2× Committed cap).</string>
+    <string name="pref_summary_boost_post_rescue_tight_ramp_trial" formatted="false">Within-user trial. On randomised treatment days the post-rescue rebound guard is capped at 60% and applies across the whole window instead of switching off above 170 mg/dL. Neither arm can deliver more insulin than the current behaviour. Leave OFF unless you are enrolled.</string>
+    <string name="pref_summary_boost_v5_aggression">Scales the catch-up dose at meal CONFIRMED. 1.0 = calibrated default; lower = gentler commit dose, higher = more aggressive. Range 0.7-1.3.</string>
+    <string name="pref_summary_boost_v5_hypo_caution">Multiplier on the ML hypo-risk damper floor. 1.0 = default; raise toward 2.0 for hypo unawareness or after a recent severe hypo. Range 1.0-2.0.</string>
+    <string name="pref_summary_boost_v5_sensitivity">Scales the per-cycle insulin (aggression) budget. 1.0 = default; below 1.0 for sensitive users, above for resistant. Range 0.8–1.2.</string>
+    <string name="pref_summary_boost_v5_confirmed_cap_u">Hard upper limit on the confirmed meal SMB. Default: 2.5 U</string>
+    <string name="pref_summary_boost_v5_committed_cap_u">Hard upper limit on the per-cycle committed meal SMB. Default: 0.5 U</string>
+    <string name="pref_summary_boost_v5_fast_carb_confirm">When a rise is sharp AND accelerating AND the meal score corroborates (and you\'re awake, not exercising), Boost confirms the meal in one cycle instead of waiting — so fast carbs get covered ~15 min earlier. Replay-validated to avoid firing on sleep/compression. Toggle off to revert to the standard observe-confirm timing.</string>
+    <string name="pref_summary_boost_v5_aggressive_early_confirm">Confirms a meal one cycle sooner still when its signal is confirm-strength on two consecutive cycles — the same shot, delivered a touch earlier. Because it occasionally commits to a rise that would have faded, it adds a little insulin, so it is set automatically only for users whose recent low-glucose exposure is well within target. Default OFF; auto-config turns it on where it is safe. Leave off (or turn off) to keep the standard confirm timing.</string>
+    <string name="pref_summary_boost_v5_composed_floor_active" formatted="false">Enforces a 25% floor on the composed soft-brake multiplier during active meal sessions above 160 mg/dL with eventualBG above target — fixes the soft-brake stack compounding to sub-pump-step zero doses mid-meal (July 2026). All hard gates and dose caps still apply. Default OFF. ENFORCED hypo-gate: the floor engages ONLY while BOTH your trailing 14-day time below 63 mg/dL (3.5 mmol/L) is under 2.0% AND your time below 70 mg/dL is under 3.5% — it is insulin-adding, so it stays suppressed (even when this is ON) if either low-exposure figure is higher, and auto-re-engages when both drop back under their limits.</string>
+    <string name="pref_summary_boost_v5_velocity_budget_active" formatted="false">When you are above 180 mg/dL but oref calculates no extra insulin is needed (it predicts you will come down on the insulin already on board), this delivers a small hold — up to 0.5 U, capped at your committed-cap and your IOB headroom — to bring highs down a little faster. It deliberately doses a touch more than the base algorithm on that high tail, so it is for users who prefer a firmer response to sustained highs. Excludes decelerating highs, sleep, and the post-rescue window; all hard hypo gates still apply. Default OFF. Uses the SAME ENFORCED hypo-gate as the brake floor: engages ONLY while your trailing 14-day time below 63 mg/dL is under 2.0% AND time below 70 mg/dL is under 3.5%, and auto-suspends if either rises.</string>
+    <string name="pref_summary_boost_v5_primer_cap_u">Fizzle-safe early primer delivered on an accelerating rise during OBSERVING — gives an earlier meal response. Additive up to this base; any velocity-scaled excess is netted off the CONFIRMED commit-shot (move, not add). 0 = OFF. Auto-config derives a per-user value.</string>
+    <string name="pref_summary_boost_v5_primer_bolus_mode">Override: deliver the acceleration primer as a bolus even if auto-config routed you to the retractable temp-basal fallback (for hypo-prone users). Floors and the commit-shot net-off are unaffected. Default OFF (respect auto-config routing).</string>
+    <string name="pref_summary_boost_v5_confirm_tranche">Experimental, off by default. Splits the confirm commitment, giving part at the confirming cycle and holding the rest for ten minutes, released only if the rise continues. Can only deliver less insulin than without it, never more. A held remainder that cannot be delivered, because the rolling cumulative cap is spent or the sleep gate is shut, counts as a decision not to release.</string>
+    <string name="pref_summary_boost_v5_tranche_fraction">Share of the sized confirm dose delivered at the confirming cycle. The remainder is held. Set to 1.0 to make the tranche inert without switching it off.</string>
+    <string name="pref_summary_boost_v5_tranche_threshold">The remainder is released when the rule\'s probability exceeds this. Higher withholds more. Auto-config sets it from your own confirm episodes over the last 45 days once there are at least 15 that clearly went big or stayed small, with at least 5 of each. It raises it whenever your episodes support that and does not currently lower it. A value you set here yourself is kept; set it back to 0.48 to hand it back to auto-config.</string>
+    <string name="pref_summary_boost_v6_pre_meal_target">Experimental: learns your habitual meal times (from Boost meal commits) and applies a low target shortly before a learned meal so insulin is working when carbs land. Exercise and post-exercise recovery override it. When OFF it only logs (\"V6 pre-meal WOULD apply\" without changing dosing) so you can verify the learned times first.</string>
+    <string name="pref_summary_boost_v6_pre_meal_target_mgdl">The low target applied during the pre-meal window. Lower = more pre-emptive insulin. Default: 72 mg/dL (4.0 mmol).</string>
+    <string name="pref_summary_boost_v6_pre_meal_lead_min">How many minutes before a learned meal the low target window OPENS. It closes 45 min before the meal. Default: 60 min.</string>
 </resources>

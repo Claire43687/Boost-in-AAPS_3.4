@@ -69,6 +69,13 @@ class PluginLifetimeWorkScanTest {
      * Nothing may be added here without a decision recorded next to it.
      */
     private val survivesStop: Map<String, String> = mapOf(
+        "OpenAPSBoostV5Plugin#configExecutor" to
+            "Boost: one daemon worker thread for V5 auto-configuration, read on 2026-10-18. It is started only from " +
+                "invoke() and the history watch that onStop cancels, so nothing new is queued once the plugin is stopped, and it runs one evaluation at a time and " +
+                "reschedules nothing. An evaluation already running when onStop comes can still finish: it reads the " +
+                "history and writes Boost preferences under configLock, the lock the engine run holds, and it queues no " +
+                "pump command. Left as is, because cutting an evaluation off half way would leave some knobs written " +
+                "and others not, which the lock is there to prevent.",
         "VirtualPumpPlugin#deliverTreatment" to
             "one-shot appScope.launch that persists a bolus; it reschedules nothing, but it can still write during a restart window",
         "InsightPlugin#bolusProgressData" to
@@ -247,6 +254,12 @@ class PluginLifetimeWorkScanTest {
     private data class Site(val launches: Int, val decision: String)
 
     private val pluginScopeLaunches: Map<String, Site> = mapOf(
+        "OpenAPSBoostPlugin.kt#onStart" to Site(
+            2,
+            "Boost: two collectors, one for EventCalibrationDetected and one for finger-stick therapy events, which " +
+                "together block SMBs for 15 minutes after a calibration. Each is held in a job (calibrationJob, " +
+                "calibrationSourceJob) and onStop cancels both. They queue no command. SAFE."
+        ),
         "PumpPluginBase.kt#onStart" to Site(
             1,
             "readStatus after a 6 s delay, guarded by isConfigured(). SAFE, and already cancelled: the job is " +

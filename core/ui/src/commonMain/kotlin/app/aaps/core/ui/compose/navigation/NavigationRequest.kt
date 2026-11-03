@@ -8,6 +8,9 @@ sealed class NavigationRequest {
     data class QuickWizard(val guid: String) : NavigationRequest()
     data class Plugin(val className: String) : NavigationRequest()
     data class PluginPreferences(val pluginKey: String) : NavigationRequest()
+
+    /** Open the Boost V2 overview, a full-screen alternative overview. Only the Android shell hosts it. */
+    data object BoostOverview : NavigationRequest()
 }
 
 /**

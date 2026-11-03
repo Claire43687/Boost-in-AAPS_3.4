@@ -3,6 +3,7 @@ package app.aaps.ui.di
 import app.aaps.core.interfaces.di.FeatureMemberInjectors
 import app.aaps.ui.activities.ErrorActivity
 import app.aaps.ui.widget.BgGraphWidget
+import app.aaps.ui.widget.BoostWidget
 import app.aaps.ui.widget.CompactBgWidget
 import app.aaps.ui.widget.GlucoseCircleWidget
 import app.aaps.ui.widget.SmallWidget
@@ -71,6 +72,12 @@ object UiMemberInjectors {
     @IntoMap
     @ClassKey(SmallWidget::class)
     fun bindSmallWidget(injector: MembersInjector<SmallWidget>): MembersInjector<*> = injector
+
+    @Provides
+    @FeatureMemberInjectors
+    @IntoMap
+    @ClassKey(BoostWidget::class)
+    fun bindBoostWidget(injector: MembersInjector<BoostWidget>): MembersInjector<*> = injector
 
     @Provides
     @FeatureMemberInjectors

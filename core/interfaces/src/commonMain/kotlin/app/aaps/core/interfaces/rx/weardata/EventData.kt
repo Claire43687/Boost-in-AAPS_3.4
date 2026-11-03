@@ -458,7 +458,11 @@ sealed class EventData : Event() {
         // The "time to eat" timer: when it was started and when it rings. Null when none runs, or from an older sender.
         // The watch draws the end in its BG graph and rings itself at that time.
         val eatReminderStartedAt: Long? = null,
-        val eatReminderEndsAt: Long? = null
+        val eatReminderEndsAt: Long? = null,
+        // Boost: current DynISF / variable sensitivity in profile units, empty when not available. Display only.
+        val variableSens: String = "",
+        // Boost: last 24 h time-in-range split as five percentages "vlow,low,inrange,high,vhigh", empty when no data. Display only.
+        val tirWeights: String = ""
     ) : EventData(), EventDataSet
 
     @Serializable

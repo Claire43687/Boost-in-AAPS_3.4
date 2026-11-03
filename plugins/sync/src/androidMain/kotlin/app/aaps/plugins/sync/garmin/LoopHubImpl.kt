@@ -5,6 +5,7 @@ import app.aaps.core.data.model.GV
 import app.aaps.core.data.model.GlucoseUnit
 import app.aaps.core.data.model.HR
 import app.aaps.core.data.model.RM
+import app.aaps.core.data.model.SC
 import app.aaps.core.data.ue.Action
 import app.aaps.core.data.ue.Sources
 import app.aaps.core.data.ue.ValueWithUnit
@@ -87,6 +88,35 @@ class LoopHubImpl(
 
     /** Returns true if the pump is connected. */
     override val isConnected: Boolean get() = runBlocking { loop.runningMode() } != RM.Mode.DISCONNECTED_PUMP
+
+    /** Short loop status for the watch face. */
+    override val loopStatus: String
+        get() = when (runBlocking { loop.runningMode() }) {
+            RM.Mode.CLOSED_LOOP       -> "CLOSED"
+            RM.Mode.CLOSED_LOOP_LGS   -> "LGS"
+            RM.Mode.OPEN_LOOP         -> "OPEN"
+            RM.Mode.DISABLED_LOOP     -> "DISABLED"
+            RM.Mode.SUPER_BOLUS       -> "SUPERBOLUS"
+            RM.Mode.DISCONNECTED_PUMP -> "DISCONN"
+            RM.Mode.SUSPENDED_BY_PUMP,
+            RM.Mode.SUSPENDED_BY_USER,
+            RM.Mode.SUSPENDED_BY_DST  -> "SUSPEND"
+            else                      -> "LOOP"   // RESUME / any transient or future mode
+        }
+
+    /** Epoch-ms of the last APS run (loop freshness), or null if it has never run. */
+    override val lastLoopEpochMs: Long?
+        get() = loop.lastRun?.lastAPSRun
+
+    /** Current DynISF / variable sensitivity in the user's glucose units. Prefer the live APS
+     *  variable_sens; fall back to the profile ISF; null if neither is available. */
+    override val variableSensInUnits: Double?
+        get() {
+            val mgdl = loop.lastRun?.constraintsProcessed?.variableSens
+                ?: currentProfile?.getIsfMgdl("GarminLoopHub")
+                ?: return null
+            return profileUtil.fromMgdlToUnits(mgdl, glucoseUnit)
+        }
 
     /** Returns true if the current profile is set of a limited amount of time. */
     override val isTemporaryProfile: Boolean
@@ -175,6 +205,79 @@ class LoopHubImpl(
         )
         appScope.launch {
             persistenceLayer.insertOrUpdateHeartRates(listOf(hr))
+        }
+    }
+
+    override fun storeSteps(
+        timestampMs: Long,
+        steps5min: Int, steps10min: Int, steps15min: Int,
+        steps30min: Int, steps60min: Int, steps180min: Int,
+        device: String?
+    ) {
+        if (timestampMs <= 0L) return
+        // A trailing-window count has a physical ceiling: nobody takes more than about 200 steps a
+        // minute, and a sprint is under that. A watch reporting 1919 steps in five minutes is
+        // reporting something else, and one was: a Venu 3 sent the cumulative daily
+        // counter in all six windows at once, because the device-side reset handling returns the
+        // whole counter when it sees a negative delta. Fifteen minutes at 1919 is six times the
+        // brisk-walk threshold the activity classifier uses, so the loop would have read continuous
+        // vigorous exercise and raised the target accordingly.
+        //
+        // Clamping rather than rejecting: a clamped value is still wrong but it is bounded and it
+        // keeps a genuine burst, whereas dropping the record loses the cycle entirely. The wider
+        // windows are also clamped from below by the narrower ones, since a three-hour count cannot
+        // be less than the five-minute count inside it.
+        val w = GarminStepWindows.sanitise(
+            steps5min, steps10min, steps15min, steps30min, steps60min, steps180min
+        )
+        val s5 = w.s5; val s10 = w.s10; val s15 = w.s15
+        val s30 = w.s30; val s60 = w.s60; val s180 = w.s180
+        if (s5 != steps5min || s180 != steps180min) {
+            aapsLogger.warn(
+                LTag.GARMIN,
+                "steps clamped from ${device ?: "Garmin"}: " +
+                    "5/$steps5min→$s5 10/$steps10min→$s10 15/$steps15min→$s15 " +
+                    "30/$steps30min→$s30 60/$steps60min→$s60 180/$steps180min→$s180"
+            )
+        }
+        val sc = SC(
+            duration = 300_000L,          // 5-min snapshot (mirrors the wear cadence)
+            timestamp = timestampMs,
+            steps5min = s5, steps10min = s10, steps15min = s15,
+            steps30min = s30, steps60min = s60, steps180min = s180,
+            device = device ?: "Garmin",
+            dateCreated = clock.millis(),
+        )
+        appScope.launch {
+            persistenceLayer.insertOrUpdateStepsCounts(listOf(sc))
+        }
+    }
+
+    override fun storeHeartRates(samples: List<Pair<Long, Int>>, device: String?) {
+        // Correct HR-model convention: timestamp = END of the minute, duration = 60 000 (matches
+        // HealthConnectHrIngest so overlapping rows dedupe by minute bucket). insertOrUpdate matches on
+        // id only and new rows have id 0, so a batch replayed on BT reconnect was stored twice and read as
+        // fresh samples; minutes this device already has are skipped.
+        val dev = device ?: "Garmin"
+        val rows = samples.mapNotNull { (endMs, bpm) ->
+            if (bpm <= 10 || endMs <= 0L) null
+            else HR(
+                timestamp = endMs,
+                duration = 60_000L,
+                dateCreated = clock.millis(),
+                beatsPerMinute = bpm.toDouble(),
+                device = dev,
+            )
+        }
+        if (rows.isEmpty()) return
+        // The 4.0 persistence layer takes a list, so the batch goes in one transaction where 3.4
+        // inserted one row per call. The rows stored are the same.
+        appScope.launch {
+            val storedMinutes = runCatching {
+                persistenceLayer.getHeartRatesFromTimeToTime(rows.minOf { it.timestamp }, rows.maxOf { it.timestamp })
+            }.getOrDefault(emptyList()).filter { it.device == dev }.mapTo(HashSet()) { it.timestamp / 60_000L }
+            val fresh = rows.filter { it.timestamp / 60_000L !in storedMinutes }.distinctBy { it.timestamp / 60_000L }
+            if (fresh.isNotEmpty()) persistenceLayer.insertOrUpdateHeartRates(fresh)
         }
     }
 }

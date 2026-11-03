@@ -89,4 +89,89 @@ internal class UnscentedKalmanFilterPluginTest {
         val b = plugin().smooth(series(120.0, 118.0, 122.0, 119.0, 121.0, 120.0, 118.0))
         a.indices.forEach { assertThat(b[it].smoothed!!).isWithin(1e-9).of(a[it].smoothed!!) }
     }
+
+    // One-minute cadence (ported from Boost 6.1.2). The filter was only ever fed the
+    // five-minute bucketed series, so every spacing it had seen was 5.0. Routing it to a native
+    // one-minute series exposed the assumptions tuned there.
+
+    @Test fun `a one-minute series is actually smoothed, not passed through`() {
+        // Before the fix the segment test required spacing in 2.0..60.0, so every consecutive
+        // pair broke a segment, none reached the two-sample minimum, and the filter fell back to
+        // copying raw values and did nothing at all.
+        val noisy = series(
+            120.0, 118.0, 123.0, 119.0, 124.0, 120.0, 125.0, 121.0,
+            126.0, 122.0, 127.0, 123.0, stepMin = 1
+        )
+        val out = plugin().smooth(noisy)
+        assertThat(out.count { it.smoothed != it.value }).isGreaterThan(0)
+    }
+
+    @Test fun `the same series at five minutes is smoothed too, so the fix is not cadence-specific`() {
+        val noisy = series(
+            120.0, 118.0, 123.0, 119.0, 124.0, 120.0, 125.0, 121.0,
+            126.0, 122.0, 127.0, 123.0, stepMin = 5
+        )
+        val out = plugin().smooth(noisy)
+        assertThat(out.count { it.smoothed != it.value }).isGreaterThan(0)
+    }
+
+    @Test fun `median spacing is read from the data`() {
+        val p = plugin()
+        assertThat(p.medianSpacingMinutes(series(100.0, 101.0, 102.0, 103.0, stepMin = 1))).isEqualTo(1.0)
+        assertThat(p.medianSpacingMinutes(series(100.0, 101.0, 102.0, 103.0, stepMin = 5))).isEqualTo(5.0)
+        assertThat(p.medianSpacingMinutes(series(100.0))).isNull()
+    }
+
+    @Test fun `the R adaptation window resizes with cadence`() {
+        // R adaptation is meant to span 90 minutes. It was a fixed reading count tuned at five-minute
+        // spacing. 6.1.2 also resized a compression follow-through count here; beta1's filter has no
+        // compression handling, so there is nothing of that kind to resize.
+        val atFive = plugin().apply { adaptWindowsToCadence(series(100.0, 101.0, 102.0, 103.0, stepMin = 5)) }
+        val atOne = plugin().apply { adaptWindowsToCadence(series(100.0, 101.0, 102.0, 103.0, stepMin = 1)) }
+        assertThat(atFive.innovationWindowForTest()).isEqualTo(18) // 90 / 5
+        assertThat(atOne.innovationWindowForTest()).isEqualTo(90)  // 90 / 1, not 18
+    }
+
+    @Test fun `an unreadable spacing falls back to the five-minute count`() {
+        val p = plugin().apply { adaptWindowsToCadence(series(100.0)) }
+        assertThat(p.innovationWindowForTest()).isEqualTo(18)
+    }
+
+    // With a one-minute sensor the runner smooths the five-minute series and
+    // then the native one on the same instance, every minute. The five-minute series ends up to five minutes
+    // before the newest native reading, which read as time going backwards and reset learning each minute.
+    @Test fun `alternating the five-minute and native series does not reset learning`() {
+        val base = 1_700_000_000_000L
+        fun native(newest: Long) = (0 until 60).map { i ->
+            InMemoryGlucoseValue(timestamp = newest - i * 60_000L, value = 120.0 + (i % 3))
+        }.toMutableList()
+        fun fiveMin(newest: Long) = (0 until 12).map { i ->
+            InMemoryGlucoseValue(timestamp = newest - i * 5 * 60_000L, value = 120.0 + (i % 3))
+        }.toMutableList()
+        val grid = base - 4 * 60_000L                          // a five-minute grid point
+        fun gridNewest(nativeNewest: Long) = grid + (nativeNewest - grid) / 300_000L * 300_000L
+        val p = plugin()
+        p.smooth(fiveMin(gridNewest(base)))
+        p.smooth(native(base))
+        val session = p.sessionIdForTest()
+        for (minute in 1..10) {
+            val newest = base + minute * 60_000L
+            p.smooth(fiveMin(gridNewest(newest)))               // zero to four minutes behind the native series
+            p.smooth(native(newest))
+        }
+        assertThat(p.sessionIdForTest()).isEqualTo(session)
+    }
+
+    @Test fun `a clock that goes back more than five minutes still resets learning`() {
+        val p = plugin()
+        p.smooth(series(120.0, 121.0, 122.0, 123.0, stepMin = 5))
+        val session = p.sessionIdForTest()
+        val earlier = series(120.0, 121.0, 122.0, 123.0, stepMin = 5).map { it.copy(timestamp = it.timestamp - 20 * 60_000L) }.toMutableList()
+        p.smooth(earlier)
+        assertThat(p.sessionIdForTest()).isEqualTo(session + 1)
+        // Once reset, the next reading after the earlier ones is not a second clock fault.
+        val next = earlier.map { it.copy(timestamp = it.timestamp + 5 * 60_000L) }.toMutableList()
+        p.smooth(next)
+        assertThat(p.sessionIdForTest()).isEqualTo(session + 1)
+    }
 }

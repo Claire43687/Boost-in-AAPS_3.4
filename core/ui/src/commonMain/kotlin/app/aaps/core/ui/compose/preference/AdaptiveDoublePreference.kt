@@ -105,6 +105,9 @@ fun AdaptiveDoublePreferenceItem(
                 step = step,
                 showValue = true,
                 valueFormatRef = valueFormatRef,
+                // Unit types with no decimals (percent, minutes, grams...) have "%1$d" templates. A Double
+                // passed to "%d" throws IllegalFormatConversionException, so round them to Int first.
+                formatAsInt = decimalPlaces == 0,
                 valueFormat = valueFormat,
                 unitLabel = unitLabelRef,
                 asDuration = unitType.isDuration(),

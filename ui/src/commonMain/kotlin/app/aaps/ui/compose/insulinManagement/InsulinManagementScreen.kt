@@ -57,6 +57,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.aaps.core.data.model.InsulinModel
 import app.aaps.core.data.ui.ConfirmationLine
 import app.aaps.core.graph.InsulinGraphCompose
 import app.aaps.core.interfaces.insulin.InsulinType
@@ -68,6 +69,7 @@ import app.aaps.core.ui.compose.AapsFloatingToolbarDeleteButton
 import app.aaps.core.ui.compose.AapsFloatingToolbarRow
 import app.aaps.core.ui.compose.AapsSpacing
 import app.aaps.core.ui.compose.AapsTopAppBar
+import app.aaps.core.ui.compose.LabeledSwitch
 import app.aaps.core.keys.interfaces.ClientRole
 import app.aaps.core.ui.compose.LocalClientRole
 import app.aaps.core.ui.compose.MasterOfflineBanner
@@ -380,6 +382,24 @@ fun InsulinManagementScreen(
 
                             Spacer(modifier = Modifier.height(12.dp))
 
+                            // Curve model. Lyumjev PD fixes peak and DIA, so their editors are locked below.
+                            val isLyumjevPd = uiState.editorModel == InsulinModel.LYUMJEV_PD
+                            LabeledSwitch(
+                                label = stringResource(UiStrings.insulin_curve_lyumjev_pd),
+                                checked = isLyumjevPd,
+                                onCheckedChange = { checked -> viewModel.updateEditorModel(if (checked) InsulinModel.LYUMJEV_PD else InsulinModel.OREF) },
+                                enabled = editorEnabled
+                            )
+                            if (isLyumjevPd) {
+                                Text(
+                                    text = stringResource(UiStrings.insulin_curve_lyumjev_pd_summary),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(12.dp))
+
                             // Peak editor
                             NumberInputRow(
                                 labelRef = CoreUiStrings.peak_label,
@@ -388,12 +408,12 @@ fun InsulinManagementScreen(
                                 valueRange = viewModel.peakRange(),
                                 step = 1.0,
                                 unitLabel = CoreUiStrings.units_min,
-                                enabled = editorEnabled,
+                                enabled = editorEnabled && !isLyumjevPd,
                                 modifier = Modifier.fillMaxWidth()
                             )
 
                             // "Load peak from" preset chips
-                            if (editorEnabled) {
+                            if (editorEnabled && !isLyumjevPd) {
                                 PeakPresetChips(
                                     presets = viewModel.presetList(),
                                     onPresetClick = { viewModel.loadPeakFromPreset(it) }
@@ -411,7 +431,7 @@ fun InsulinManagementScreen(
                                 step = 0.1,
                                 decimalPlaces = 1,
                                 unitLabel = CoreUiStrings.units_hours,
-                                enabled = editorEnabled,
+                                enabled = editorEnabled && !isLyumjevPd,
                                 modifier = Modifier.fillMaxWidth()
                             )
 

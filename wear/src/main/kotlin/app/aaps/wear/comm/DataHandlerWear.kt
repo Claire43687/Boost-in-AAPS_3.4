@@ -46,6 +46,9 @@ import app.aaps.wear.complications.LongStatusComplication
 import app.aaps.wear.complications.LongStatusFlippedComplication
 import app.aaps.wear.complications.RunningModeComplication
 import app.aaps.wear.complications.SgvComplication
+import app.aaps.wear.complications.TirWeightedComplication
+import app.aaps.wear.complications.DynIsfComplication
+import app.aaps.wear.complications.SgvRangedComplication
 import app.aaps.wear.complications.SgvComplicationExt1
 import app.aaps.wear.complications.SgvComplicationExt2
 import app.aaps.wear.complications.SgvLargeComplication
@@ -488,7 +491,12 @@ class DataHandlerWear(
             // Battery complication
             UploaderBatteryComplication::class.java,
             // Running mode complication
-            RunningModeComplication::class.java
+            RunningModeComplication::class.java,
+            // Boost complications. The ranged glucose feeds Watch Face Format faces, which would
+            // otherwise show it up to one 300 second update period behind the face's own reading.
+            SgvRangedComplication::class.java,
+            DynIsfComplication::class.java,
+            TirWeightedComplication::class.java
             // Note: WallpaperComplication is abstract, subclasses will auto-update
         )
 

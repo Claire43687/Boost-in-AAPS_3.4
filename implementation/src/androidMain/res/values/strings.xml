@@ -115,4 +115,5 @@
     <string name="google_drive_download_error">Error downloading file: %1$s</string>
     <string name="google_drive_authorized">Google Drive Authorized</string>
     <string name="google_drive_reauth_required">Please clear settings and re-authorize Google Drive</string>
+    <string name="insulin_import_check_dia" comment="Shown once after importing settings from an older version, when the file could not say which insulin duration was in use. %1$.1f is the duration in hours, e.g. 10.0, %2$s is the insulin name.">The imported settings did not say which insulin duration was in use, so %1$.1f hours was set for %2$s. Check it on the insulin screen.</string>
 </resources>

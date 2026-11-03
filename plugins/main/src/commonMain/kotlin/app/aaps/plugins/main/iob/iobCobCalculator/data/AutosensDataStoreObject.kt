@@ -73,6 +73,27 @@ class AutosensDataStoreObject : AutosensDataStore {
         get() = dataLock.withLock { field }
         set(value) { dataLock.withLock { field = value } }
 
+    /**
+     * The native series when it is a distinct list, which it is only on a sub-two-minute feed.
+     * Null otherwise, and [bucketedDataNative] then answers with [bucketedData] itself.
+     *
+     * Boost 6.1.2 stored the shared list in the native field directly. That worked there because
+     * its smoother changed the list in place and returned it. Here the smoother is handed a copy
+     * and the result is assigned back to [bucketedData] only, so a stored reference would keep the
+     * unsmoothed list on a five-minute feed, and the delta calculation, which reads the native
+     * series, would quietly stop seeing smoothed glucose. Resolving the fallback on every read
+     * keeps the two the same list whatever replaces [bucketedData].
+     */
+    private var distinctNative: MutableList<InMemoryGlucoseValue>? = null
+
+    override var bucketedDataNative: MutableList<InMemoryGlucoseValue>?
+        get() = dataLock.withLock { distinctNative ?: bucketedData }
+        set(value) { dataLock.withLock { distinctNative = if (value === bucketedData) null else value } }
+
+    override var detectedCadenceMinutes: Double? = null
+        get() = dataLock.withLock { field }
+        set(value) { dataLock.withLock { field = value } }
+
     override fun clone(): AutosensDataStore =
         AutosensDataStoreObject().also {
             dataLock.withLock {
@@ -90,10 +111,15 @@ class AutosensDataStoreObject : AutosensDataStore {
                 it.bgReadings = this.bgReadings.toMutableList()
                 it.autosensDataTable = LongSparseArray<AutosensData>(this.autosensDataTable.size).apply { putAll(this@AutosensDataStoreObject.autosensDataTable) }
                 it.bucketedData = this.bucketedData?.toMutableList()
+                // Only a distinct native list is copied. A shared one is the clone's own
+                // bucketedData, which the getter falls back to.
+                it.distinctNative = this.distinctNative?.toMutableList()
+                it.detectedCadenceMinutes = this.detectedCadenceMinutes
             }
         }
 
     override fun getBucketedDataTableCopy(): MutableList<InMemoryGlucoseValue>? = dataLock.withLock { bucketedData?.toMutableList() }
+    override fun getBucketedDataNativeTableCopy(): MutableList<InMemoryGlucoseValue>? = dataLock.withLock { bucketedDataNative?.toMutableList() }
     override fun getBgReadingsDataTableCopy(): List<GV> = dataLock.withLock { bgReadings.toMutableList() }
 
     override fun reset() {
@@ -167,6 +193,11 @@ class AutosensDataStoreObject : AutosensDataStore {
     override fun actualBg(): InMemoryGlucoseValue? {
         val lastBg = lastBg() ?: return null
         return if (lastBg.timestamp > Clock.System.now().toEpochMilliseconds() - T.mins(Constants.OLD_BG_MINUTES).msecs()) lastBg else null
+    }
+
+    override fun actualBgNative(): InMemoryGlucoseValue? {
+        val last = dataLock.withLock { bucketedDataNative?.firstOrNull() } ?: return null
+        return if (last.timestamp > Clock.System.now().toEpochMilliseconds() - T.mins(Constants.OLD_BG_MINUTES).msecs()) last else null
     }
 
     override fun lastDataTime(dateUtil: DateUtil): String =
@@ -367,6 +398,95 @@ class AutosensDataStoreObject : AutosensDataStore {
         }
         lastUsed5minCalculation = fiveMinData
         if (fiveMinData) createBucketedData5min(aapsLogger, dateUtil) else createBucketedDataRecalculated(aapsLogger, dateUtil)
+        detectedCadenceMinutes = detectCadenceMinutes()
+        createBucketedDataNative(aapsLogger)
+    }
+
+    /**
+     * Median spacing of the raw readings, in minutes. Median rather than mean so that one gap
+     * cannot move it. Spacings above an hour are treated as gaps and ignored.
+     */
+    fun detectCadenceMinutes(): Double? {
+        dataLock.withLock {
+            // One read of the property, then work on the local - see the note on [findNewer].
+            val readings = bgReadings
+            if (readings.size < 4) return null
+            val gaps = ArrayList<Double>(readings.size - 1)
+            for (i in 0 until readings.size - 1) {
+                // bgReadings is newest-first
+                val d = (readings[i].timestamp - readings[i + 1].timestamp) / 60000.0
+                if (d > 0.1 && d <= 60.0) gaps.add(d)
+            }
+            if (gaps.size < 3) return null
+            gaps.sort()
+            val m = gaps.size / 2
+            return if (gaps.size % 2 == 0) (gaps[m - 1] + gaps[m]) / 2.0 else gaps[m]
+        }
+    }
+
+    /**
+     * Build the native-cadence series.
+     *
+     * On any feed slower than two minutes this is the existing bucketed series, shared rather
+     * than copied, because they are the same thing. On a faster feed it is a regular grid at the
+     * detected cadence, interpolated the same way the five-minute path is, so every reading is
+     * kept and the spacing stays regular.
+     *
+     * The native path deliberately does not snap to [referenceTime]. That anchor exists so that
+     * cached five-minute buckets line up between cycles; the native series is rebuilt each cycle
+     * and has no such cache to align with.
+     */
+    private fun createBucketedDataNative(aapsLogger: AAPSLogger) {
+        dataLock.withLock {
+            val cadence = detectedCadenceMinutes
+            // One read of the property, then work on the local - see the note on [findNewer].
+            val readings = bgReadings
+            // Only a genuinely sub-two-minute feed takes the native path. An earlier draft used
+            // 4.0, which also captured three-minute sensors and changed their deltas: with 3-min
+            // raw data the 2.5-7.5 minute window holds two points rather than one, so the delta
+            // becomes an average over two lookbacks instead of a single one. Caught by
+            // AutosensDataStoreTest.threeMinDataWithRecalculation, which moved 2.0 -> 1.67.
+            // That is a real behaviour change and not one this branch is asking for, so the
+            // native path is confined to the one-minute case it exists to serve.
+            if (cadence == null || cadence >= 2.0 || readings.size < 3) {
+                distinctNative = null
+                return
+            }
+            // Build a REGULAR grid at the native cadence rather than passing the raw readings
+            // through. Raw readings are irregularly spaced: a CGM backfill landing just after a
+            // regular reading produces a pair seconds apart, and the smoother starts a new
+            // segment on any spacing below its minimum, re-initialising from that point's RAW
+            // value and discarding the smoothed trend. The visible result is a sharp downward V
+            // where the smoothed line steps to the raw dot and recovers near-vertically.
+            //
+            // Trio hit exactly this , reproduced to within 1 mg/dL, and it was
+            // Trio-specific only because AAPS buckets before smoothing and Trio did not. Trio's
+            // fix was to bucket onto a five-minute grid; the same reasoning at the native cadence
+            // keeps every reading and regular spacing both.
+            val stepMs = (cadence * 60_000.0).roundToLong()
+            val out = ArrayList<InMemoryGlucoseValue>()
+            var t = readings[0].timestamp
+            val oldest = readings[readings.size - 1].timestamp
+            while (t >= oldest) {
+                val newer = findNewer(t)
+                val older = findOlder(t)
+                if (newer == null || older == null) break
+                if (older.timestamp == newer.timestamp) {
+                    out.add(InMemoryGlucoseValue.fromGv(newer))
+                } else {
+                    val span = (newer.timestamp - older.timestamp).toDouble()
+                    val toNew = (newer.timestamp - t).toDouble()
+                    val filled = min(t - older.timestamp, newer.timestamp - t) > T.secs(IRREGULAR_DATA_SEC).msecs()
+                    val v = newer.value - toNew / span * (newer.value - older.value)
+                    out.add(InMemoryGlucoseValue(t, v.roundToLong().toDouble(), filledGap = filled, sourceSensor = readings[0].sourceSensor))
+                }
+                t -= stepMs
+            }
+            distinctNative = out
+            aapsLogger.debug(LTag.AUTOSENS) {
+                "Native cadence ${(cadence * 10).roundToLong() / 10.0} min: ${out.size} readings kept against ${bucketedData?.size} five-minute buckets"
+            }
+        }
     }
 
     /**

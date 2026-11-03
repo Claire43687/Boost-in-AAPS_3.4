@@ -974,6 +974,8 @@ class DataSyncSelectorV3(
             // Snapshot once so the validity check and JSON read see the same store.
             val profileStore = profileRepository.profile.value ?: return
             if (!profileStore.allProfilesValid) return
+            // A new install has a store with no profiles, and it is valid. Sent, it became Nightscout's newest store.
+            if (profileStore.getProfileList().isEmpty()) return
             // v3 needs `date`, and the store always carries one - it is written unconditionally by the
             // single producer, ProfileRepositoryImpl.createAndStoreConvertedProfile, and pinned by a
             // test there. This used to patch it in when missing, which could never fire.

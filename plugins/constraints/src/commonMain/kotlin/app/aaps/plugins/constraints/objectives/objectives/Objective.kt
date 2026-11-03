@@ -60,9 +60,13 @@ abstract class Objective(
     }
 
     val isAccomplished: Boolean
-        get() = accomplishedOn != 0L && accomplishedOn < dateUtil.now()
+        get() = waived || (accomplishedOn != 0L && accomplishedOn < dateUtil.now())
     val isStarted: Boolean
-        get() = startedOn != 0L
+        get() = waived || startedOn != 0L
+
+    // Boost: an objective added after these ten is not asked of someone who has already finished them all.
+    private val waived: Boolean
+        get() = spName !in ORIGINAL_OBJECTIVES && ORIGINAL_OBJECTIVES.all { preferences.get(ObjectivesLongComposedKey.Accomplished, it) != 0L }
 
     abstract inner class Task(var objective: Objective, val task: TextRef) {
 
@@ -154,4 +158,9 @@ abstract class Objective(
     class Hint internal constructor(var hint: TextRef)
 
     class Learned internal constructor(var learned: TextRef)
+
+    private companion object {
+
+        val ORIGINAL_OBJECTIVES = setOf("config", "usage", "exam", "openloop", "maxbasal", "maxiobzero", "maxiob", "autosens", "smb", "auto")
+    }
 }

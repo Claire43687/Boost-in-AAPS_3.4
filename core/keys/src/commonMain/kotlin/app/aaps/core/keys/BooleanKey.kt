@@ -59,6 +59,12 @@ enum class BooleanKey(
         defaultedBySM = true,
         showInNsClientMode = false
     ),
+    // Boost: open the Boost V2 overview when the app starts, the 4.0 form of 6.1.2's "Use Boost Overview V2"
+    // (same stored key, so a 3.4 settings import carries it over). Android only, like the overview itself.
+    OverviewUseBoostOverviewV2(
+        key = "use_boost_overview_v2", defaultValue = false, title = KeysStrings.pref_title_use_boost_overview_v2,
+        summary = KeysStrings.pref_summary_use_boost_overview_v2, defaultedBySM = true, platforms = AppPlatform.ANDROID_ONLY
+    ),
     OverviewShowNotesInDialogs(key = "show_notes_entry_dialogs", defaultValue = false, title = KeysStrings.pref_title_show_notes_in_dialogs, defaultedBySM = true),
     OverviewUseBolusAdvisor("use_bolus_advisor", true, KeysStrings.pref_title_use_bolus_advisor, KeysStrings.pref_summary_use_bolus_advisor, defaultedBySM = true, sync = SyncSpec(SyncChannel.Cold, SyncDirection.Bidirectional)),
     OverviewUseBolusReminder("use_bolus_reminder", true, KeysStrings.pref_title_use_bolus_reminder, KeysStrings.pref_summary_use_bolus_reminder, defaultedBySM = true, sync = SyncSpec(SyncChannel.Cold, SyncDirection.Bidirectional)),
@@ -285,6 +291,45 @@ enum class BooleanKey(
     SiteRotationManagePump("site_rotation_manage_pump", defaultValue = false, title = KeysStrings.pref_title_site_rotation_manage_pump, sync = SyncSpec(SyncChannel.Cold, SyncDirection.Bidirectional)),
     SiteRotationManageCgm("site_rotation_manage_cgm", defaultValue = false, title = KeysStrings.pref_title_site_rotation_manage_cgm, sync = SyncSpec(SyncChannel.Cold, SyncDirection.Bidirectional)),
 
+    // Boost
+    ApsBoostEnableCircadianIsf("enableCircadianISF", false, KeysStrings.pref_title_boost_enable_circadian_isf, summary = KeysStrings.pref_summary_boost_enable_circadian_isf, defaultedBySM = true),
+    ApsBoostAllowWithHighTt("enableBoost_with_high_temptarget", false, KeysStrings.pref_title_boost_allow_with_high_tt, summary = KeysStrings.pref_summary_boost_allow_with_high_tt, defaultedBySM = true),
+    ApsBoostUseTdd("boost_use_tdd", false, KeysStrings.pref_title_boost_use_tdd, summary = KeysStrings.pref_summary_boost_use_tdd, defaultedBySM = true),
+    ApsBoostAdjustSensitivity("boost_adjust_sensitivity", false, KeysStrings.pref_title_boost_adjust_sensitivity, summary = KeysStrings.pref_summary_boost_adjust_sensitivity, defaultedBySM = true, dependency = ApsBoostUseTdd),
+    ApsBoostAllowAllBgSources("boost_allow_all_bg_sources", true, KeysStrings.pref_title_boost_allow_all_bg_sources, defaultedBySM = true),
+    ApsBoostNightModeEnabled("boost_night_mode_enabled", false, KeysStrings.pref_title_boost_night_mode_enabled, summary = KeysStrings.pref_summary_boost_night_mode_enabled, defaultedBySM = true),
+    ApsBoostNightModeDisableWithCob("boost_night_mode_disable_with_cob", false, KeysStrings.pref_title_boost_night_mode_disable_with_cob, summary = KeysStrings.pref_summary_boost_night_mode_disable_with_cob, defaultedBySM = true),
+    ApsBoostNightModeDisableWithLowTt("boost_night_mode_disable_with_low_tt", false, KeysStrings.pref_title_boost_night_mode_disable_with_low_tt, summary = KeysStrings.pref_summary_boost_night_mode_disable_with_low_tt, defaultedBySM = true),
+    ApsBoostNightModeAutoBySleep("boost_night_mode_auto_by_sleep", false, KeysStrings.pref_title_boost_night_mode_auto_by_sleep, summary = KeysStrings.pref_summary_boost_night_mode_auto_by_sleep, defaultedBySM = true),
+    ApsBoostHealthConnectHrEnabled("boost_health_connect_hr_enabled", false, KeysStrings.pref_title_boost_health_connect_hr_enabled, summary = KeysStrings.pref_summary_boost_health_connect_hr_enabled, defaultedBySM = true),
+    ApsBoostBypassVersionCheck("boost_bypass_version_check", true, KeysStrings.pref_title_boost_bypass_version_check, defaultedBySM = true),
+    ApsBoostV5ActiveDosing("boost_v5_active_dosing", false, KeysStrings.pref_title_boost_v5_active_dosing, defaultedBySM = true),
+    ApsBoostV6PreMealTarget("boost_v6_pre_meal_target", false, KeysStrings.pref_title_boost_v6_pre_meal_target, summary = KeysStrings.pref_summary_boost_v6_pre_meal_target, defaultedBySM = true),
+    ApsBoostV5FastCarbConfirm("boost_v5_fast_carb_confirm", true, KeysStrings.pref_title_boost_v5_fast_carb_confirm, summary = KeysStrings.pref_summary_boost_v5_fast_carb_confirm, defaultedBySM = true),
+    ApsBoostV5ConfirmTranche("boost_v5_confirm_tranche", false, KeysStrings.pref_title_boost_v5_confirm_tranche, summary = KeysStrings.pref_summary_boost_v5_confirm_tranche, defaultedBySM = true),
+    ApsBoostV5AggressiveEarlyConfirm("boost_v5_aggressive_early_confirm", false, KeysStrings.pref_title_boost_v5_aggressive_early_confirm, summary = KeysStrings.pref_summary_boost_v5_aggressive_early_confirm, defaultedBySM = true),
+    ApsBoostPostRescueTightRampTrial("boost_postrescue_tight_ramp_trial", false, KeysStrings.pref_title_boost_postrescue_tight_ramp_trial, summary = KeysStrings.pref_summary_boost_post_rescue_tight_ramp_trial, defaultedBySM = true),
+    ApsBoostV5ComposedFloorActive("boost_v5_composed_floor_active", false, KeysStrings.pref_title_boost_v5_composed_floor_active, summary = KeysStrings.pref_summary_boost_v5_composed_floor_active, defaultedBySM = true),
+    ApsBoostV5VelocityBudgetActive("boost_v5_velocity_budget_active", false, KeysStrings.pref_title_boost_v5_velocity_budget_active, summary = KeysStrings.pref_summary_boost_v5_velocity_budget_active, defaultedBySM = true),
+    ApsBoostV5PrimerTbrFallback("boost_v5_primer_tbr_fallback", false, KeysStrings.pref_title_boost_v5_primer_tbr_fallback, defaultedBySM = true),
+    ApsBoostV5PrimerBolusMode("boost_v5_primer_bolus_mode", false, KeysStrings.pref_title_boost_v5_primer_bolus_mode, summary = KeysStrings.pref_summary_boost_v5_primer_bolus_mode, defaultedBySM = true),
+    ApsBoostV5AutoConfigDone("boost_v5_autoconfig_done", false, KeysStrings.pref_title_boost_v5_autoconfig_done, defaultedBySM = true),
+    ApsBoostPostExerciseRecoveryEnabled("boost_post_exercise_recovery_enabled", false, KeysStrings.pref_title_boost_post_exercise_recovery_enabled, summary = KeysStrings.pref_summary_boost_post_exercise_recovery_enabled, defaultedBySM = true),
+    ApsBoostActivityShadowEnabled("boost_activity_shadow_enabled", true, KeysStrings.pref_title_boost_activity_shadow_enabled, summary = KeysStrings.pref_summary_boost_activity_shadow_enabled, defaultedBySM = true),
+    ApsBoostAutosensWhenNoTdd("boost_autosens_when_no_tdd", true, KeysStrings.pref_title_boost_autosens_when_no_tdd, summary = KeysStrings.pref_summary_boost_autosens_when_no_tdd, defaultedBySM = true),
+    ApsBoostHrIntegrationEnabled("boost_hr_integration_enabled", false, KeysStrings.pref_title_boost_hr_integration_enabled, summary = KeysStrings.pref_summary_boost_hr_integration_enabled, defaultedBySM = true),
+    ApsBoostHrStressDetection("boost_hr_stress_detection", false, KeysStrings.pref_title_boost_hr_stress_detection, summary = KeysStrings.pref_summary_boost_hr_stress_detection, defaultedBySM = true),
+    ApsBoostV2ChartFaithful("boost_v2_chart_faithful", false, KeysStrings.pref_title_boost_v2_chart_faithful, defaultedBySM = true),
+
+    /**
+     * Run the loop at the sensor's own cadence instead of once per five minutes.
+     *
+     * Off by default, and a no-op on a five-minute sensor, where the native series and the
+     * bucketed series are the same list. On a one-minute sensor it is the difference between a
+     * five-minute loop that reads one-minute data and a loop that runs every minute. Those are
+     * separate interventions and this is what separates them.
+     */
+    ApsLoopAtNativeCadence("loop_at_native_cadence", false, KeysStrings.pref_title_aps_loop_at_native_cadence, KeysStrings.pref_summary_aps_loop_at_native_cadence),
     ;
 
 }

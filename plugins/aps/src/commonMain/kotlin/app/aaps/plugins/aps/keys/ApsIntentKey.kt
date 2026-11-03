@@ -20,5 +20,14 @@ enum class ApsIntentKey(
         title = ApsStrings.openapsama_link_to_preference_json_doc_txt,
         preferenceType = PreferenceType.URL,
         urlRef = ApsStrings.openapsama_link_to_preference_json_doc
+    ),
+
+    // Boost: opens the Health Connect permission screen. The click is attached at runtime by the
+    // Boost plugin (withClick), since starting an activity needs an Android Context.
+    GrantHealthConnect(
+        key = "boost_hc_grant_permission",
+        title = ApsStrings.boost_hc_grant_title,
+        summary = ApsStrings.boost_hc_grant_summary,
+        preferenceType = PreferenceType.ACTIVITY
     )
 }
