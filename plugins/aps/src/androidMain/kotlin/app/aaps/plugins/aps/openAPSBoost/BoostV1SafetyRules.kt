@@ -9,7 +9,7 @@ import kotlin.math.floor
 import kotlin.math.min
 
 // Dose-path rules for the V1 Boost engine (DetermineBasalBoost), from the dose-path audit
-// (items 5, 19 and 20).
+// (items 4, 5, 19 and 20).
 //
 // They live here, as top-level functions, because DetermineBasalBoost.determine_basal sits at the limit
 // of what ART's verifier accepts: an eleven-line branch inlined into it took the method from 246 to 270
@@ -19,6 +19,31 @@ import kotlin.math.min
 // an invoke-static/range and its own run of consecutive registers: measured with d8 and dexdump on
 // calling the all-primitive forms from determine_basal took it from 266 to 273 registers, and
 // the forms used here take it to 237. The primitive versions carry the logic and the tests.
+
+/**
+ * How far the percent-scale divisor moves away from the user's insulinReq% divisor (audit item 4).
+ * The divisor is `insulinReqPct - boostPercentScaleReduction(bg, insulinReqPct - scalePct)`.
+ *
+ * The sliding scale was written for 108 to 180 mg/dL: at 180 the divisor is insulinReqPct and it moves
+ * linearly towards scalePct as glucose falls to 108. The original reduction, `abs(bg - 180) / 72 * slope`,
+ * used the absolute distance from 180, so above 180 the divisor moved towards scalePct again and then
+ * through zero (near 276 mg/dL at insulinReq% 50 and percent scale 200, near 289 mg/dL at 85% and 250%),
+ * multiplying insulinReq in Tiers 3 and 6, which have no upper glucose bound.
+ *
+ * Above 180 a positive [slope] (a divisor that would shrink) now gives no reduction, so the divisor stays
+ * at its value at 180. A zero or negative slope (percent scale at or below insulinReq%, or Tier 6 with
+ * percent scale off, where its slope is `-insulinReqPct`) makes the divisor grow above 180, which is the
+ * more conservative direction, and is kept. At and below 180 the reduction is the original one, so Tier 5
+ * (110 to 180 mg/dL) is unchanged.
+ *
+ * The divisor cannot reach zero: above 180 it is at least insulinReqPct, and at and below 180 the callers
+ * only reach this with bg >= 108 (Tier 3) or bg > 110 (Tier 6), where `abs(bg - 180) / 72` is at most 1,
+ * so the divisor lies between insulinReqPct and the scale divisor the caller subtracted, both positive.
+ *
+ * Tier 6 passes `insulinReqPct - 2 * scalePct` as [slope], as its own formula always has.
+ */
+internal fun boostPercentScaleReduction(bg: Double, slope: Double): Double =
+    if (bg > 180.0 && slope > 0.0) 0.0 else (abs(bg - 180) / 72) * slope
 
 /**
  * Final microbolus held inside oref's max_iob (audit item 5). insulinReq is already clamped to
@@ -63,7 +88,10 @@ internal fun boostG3HoldConditionsMet(mealData: MealData, glucoseStatus: Glucose
  * ML downgrade. The glucose, delta, insulinReq and IOB conditions stay where they were.
  */
 internal fun boostSpikeOverrideAllowed(boostActive: Boolean, tier: String?, inPostRescueWindow: Boolean, mlTierDowngrade: Boolean): Boolean =
-    boostActive && tier == "REGULAR_OREF1" && !inPostRescueWindow && !mlTierDowngrade
+    boostActive && tier == TIER_REGULAR_OREF1 && !inPostRescueWindow && !mlTierDowngrade
+
+/** Tier 8's name, shared by the engine and the spike-override gate, which would silently stop gating if the two drifted apart. */
+internal const val TIER_REGULAR_OREF1 = "REGULAR_OREF1"
 
 /**
  * Low-glucose threshold after Boost's lowering on an accelerating rise.

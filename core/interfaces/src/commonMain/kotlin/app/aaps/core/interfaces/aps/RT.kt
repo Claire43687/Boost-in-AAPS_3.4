@@ -147,14 +147,16 @@ data class RT(
     var boostVwa_usedPrevDay: Boolean? = null,   // true where the previous day carried the seam
 
     // SHADOW telemetry does NOT get RT fields. Every Boost shadow emits its output as a
-    // "tag=value; " appended to [reason] instead (the confirm tranche writes "tranche=...",
-    // the acceleration meal shadow "accelMeal=..."). The extractor parses them back into
-    // database columns.
+    // "tag=value; " appended to [reason] instead: the four-column hypo shadow writes
+    // "hypo4=sustained,near;", the confirm tranche
+    // "tranche=...". The extractor parses them back into database columns.
     // WHY: adding ANY field to this huge @Serializable data class shifts the register allocation of
     // the legacy DetermineBasalBoostV3MLG3.determine_basal (which builds an RT and sits right at the
-    // ART method-verifier limit) and trips a VerifyError → instant startup crash (reproduced on an
-    // emulator, both High- and Low-half register-aliasing). Riding in the existing reason
-    // string keeps RT's constructor byte-identical to the verified build. The extractor parses the tag.
+    // ART method-verifier limit) and trips a VerifyError → instant startup crash. Reproduced on an
+    // emulator, and again on a flashed phone where a single added property took that method from 273 to 274 registers and the app died before it started, with no stack
+    // trace and no log line. Riding in the reason string keeps RT's constructor byte-identical to
+    // the verified build. RtFieldCountTest pins the count so the next attempt fails a test rather
+    // than a phone. If you are here to add a field: do not. Use a reason tag.
 
     // HR + sleep telemetry — emitted into NS devicestatus for retrospective
     // sleep-model tuning. Cadence = one observation per Boost cycle (~5 min), which
@@ -204,14 +206,7 @@ data class RT(
     // Step-feed availability (F1): which live-capable feeds are actually reporting this
     // cycle — "phone+wear" | "phone" | "wear" | "none". Written EVERY cycle; "none" marks the cycles
     // where the INACTIVE branch and the steps-based sleep-in are suppressed (data absent ≠ sedentary).
-    var boostSteps_feed: String? = null,
-    // Autosens / TDD-DynISF coordination telemetry. Logs which sensitivity mechanism
-    // is driving basal/target/CR scaling, plus the would-be alternative — so the
-    // ApsBoostAutosensWhenNoTdd fix can be validated on real data before it's enabled.
-    var boostAutosens_mode: String? = null,              // "tdd" | "autosens" | "curve" (which drives basal)
-    var boostAutosens_orefRatio: Double? = null,         // real oref autosens ratio (1.0 if autosens off)
-    var boostAutosens_curveRatio: Double? = null,        // legacy DynISF-curve ratio (sensNormalTarget/variableSens)
-    var boostAutosens_appliedRatio: Double? = null       // the ratio actually passed to determine_basal this cycle
+    var boostSteps_feed: String? = null
 ) {
 
     fun serialize() = Json.encodeToString(serializer(), this)

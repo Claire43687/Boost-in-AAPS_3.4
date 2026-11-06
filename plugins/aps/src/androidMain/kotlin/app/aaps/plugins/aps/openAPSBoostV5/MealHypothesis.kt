@@ -78,6 +78,14 @@ import kotlin.math.max
  * closed and a rise that passes the slow path's gates re-engages COMMITTED, as Fix 7 does from
  * RECOVERING. With no clock (nowMs <= 0, tests and legacy callers) the lock is cleared on leaving
  * RECOVERING and on a new OBSERVING run, as before.
+ *
+ * ## COMMITTED exit and RECOVERING re-engage on the rise (5 November 2026)
+ *
+ * COMMITTED went to RECOVERING on deceleration alone while glucose was still rising by more than
+ * 5 mg/dL per 5 min, and a second rise in RECOVERING did not re-engage because a steady fast rise
+ * has low acceleration. The exit now also needs delta below [RECOVERING_ENTRY_MAX_DELTA], and
+ * RECOVERING re-engages COMMITTED when delta is above [RECOVERING_REENGAGE_RISE_DELTA]. Re-engage is
+ * still COMMITTED (1.0x), never a second CONFIRMED, so Fix 6 and the session lock are unchanged.
  */
 
 enum class MealHypothesis { IDLE, OBSERVING, CONFIRMED, COMMITTED, RECOVERING }
@@ -222,20 +230,43 @@ internal fun confirmDoseFloorU(committedCapU: Double, confirmedCapU: Double): Do
 internal const val FALL_BACK_TO_IDLE_SCORE = 0.36               // calibrated: 0.30 → 0.36
 internal const val FALL_BACK_TO_IDLE_AGE = 2                    // hysteresis: falls back when TOTAL OBSERVING age ≥ 2 AND the CURRENT cycle is below threshold (not "2 consecutive below" — one sub-threshold blip after age 2 exits)
 internal const val CONFIRMED_TO_COMMITTED_AGE = 0               // Fix 6: 1 → 0 (true single-cycle commit; previously CONFIRMED stayed for 2 invokes due to age semantics, allowing 2× CONFIRMED-mult doses)
-internal const val RECOVERING_DECEL_THRESHOLD = -5.0            // delta_accl < -5 enters RECOVERING (with delta declining)
+internal const val RECOVERING_DECEL_THRESHOLD = -5.0            // delta_accl < -5 enters RECOVERING (with delta declining and below RECOVERING_ENTRY_MAX_DELTA)
+
+/**
+ * COMMITTED goes to RECOVERING only when delta is also below this, mg/dL per 5 min.
+ *
+ * Deceleration alone sent a meal that was still rising by more than 5 mg/dL per 5 min to RECOVERING
+ * one cycle after COMMITTED began, and the rest of the rise was dosed at 0.4x. A slower rise is not
+ * a recovery. 3 was chosen from a cohort replay over 2, 3 and 4 (with 6, 8 and 10 for
+ * [RECOVERING_REENGAGE_RISE_DELTA]): at every point the share of the added insulin that came
+ * before a sensor value below 70 mg/dL within 3 h had its 95% upper bound below the 27% benchmark, and 3 sits in the
+ * middle of the range.
+ */
+internal const val RECOVERING_ENTRY_MAX_DELTA = 3.0
 internal const val RECOVERING_TO_IDLE_SCORE = 0.18              // calibrated: 0.20 → 0.18
 
 // Fix 7 — multi-phase meal re-engagement. On a two-phase meal (rise → decel → rise),
 // the mid-meal deceleration sends COMMITTED → RECOVERING, and RECOVERING previously had no path
 // back to active dosing — V5 dribbled at 0.4× through the entire second climb (BG ran to 192 on
 // ). These thresholds let RECOVERING resume COMMITTED (1.0×, NOT a new 1.8× CONFIRMED
-// commit — Fix 6 stays intact) when the meal genuinely re-accelerates while still well above target.
+// commit — Fix 6 stays intact) when the meal re-accelerates, or rises fast ([RECOVERING_REENGAGE_RISE_DELTA]), while still well above target.
 // The −5 back-off vs +10 re-engage dead-band + min-age give hysteresis against flicker.
 // Initial estimates; revisit after a few two-phase meals.
 internal const val RECOVERING_REENGAGE_ACCL = 10.0             // delta_accl must exceed this to re-engage
 internal const val RECOVERING_REENGAGE_DELTA = 3.0            // BG must actually be rising (mg/dL per 5 min)
 internal const val RECOVERING_REENGAGE_OFFSET_MGDL = 20.0    // eventualBg − targetBg must exceed this (meal still material)
 internal const val RECOVERING_REENGAGE_MIN_AGE = 1          // ≥1 cycle in RECOVERING before re-engaging (no same-cycle flicker)
+
+/**
+ * RECOVERING re-engages COMMITTED on the rise itself when delta is above this, mg/dL per 5 min,
+ * with the same eventualBG offset and minimum age as the acceleration route, and without its
+ * `delta_accl > 10` condition. A steady fast rise has low acceleration, so the acceleration route
+ * alone left a second rise of a meal at 0.4x. The acceleration route is kept as an alternative.
+ * On this route the gap between this and [RECOVERING_ENTRY_MAX_DELTA] stops the state flicking between
+ * the two. On the acceleration route the two delta tests meet at 3; there the -5 / +10 acceleration
+ * dead-band and the minimum age give the hysteresis.
+ */
+internal const val RECOVERING_REENGAGE_RISE_DELTA = 8.0
 
 // fast-carb fast-path. The observe→confirm latency commits ~1 cycle late on fast
 // carbs (the meal: peak 185 then crash 54). When the rise is sharp AND accelerating
@@ -422,8 +453,8 @@ internal fun observingFallsBack(current: MealHypothesisState, score: Double): Bo
  * @param delta this cycle's BG delta, mg/dL/5min.
  * @param deltaAccl this cycle's delta_accl, percent.
  * @param deltaDeclining whether delta has been monotonically declining over the last ≥2 cycles
- *   (computed by the caller from delta history). COMMITTED → RECOVERING requires both
- *   `delta_accl < -5` AND this declining-2-cycles condition.
+ *   (computed by the caller from delta history). COMMITTED → RECOVERING requires
+ *   `delta_accl < -5`, this declining-2-cycles condition and delta below [RECOVERING_ENTRY_MAX_DELTA].
  */
 fun step(
     current: MealHypothesisState,
@@ -555,7 +586,8 @@ fun step(
         MealHypothesis.COMMITTED -> {
             // BOTH conditions required to back off — prevents flicker on transient deceleration
             // mid-rise (e.g. CGM noise). V4's tier ladder had this flicker problem.
-            val backOff = deltaAccl < RECOVERING_DECEL_THRESHOLD && deltaDeclining
+            // A meal that is slowing but still clearly rising stays COMMITTED (RECOVERING_ENTRY_MAX_DELTA).
+            val backOff = deltaAccl < RECOVERING_DECEL_THRESHOLD && deltaDeclining && delta < RECOVERING_ENTRY_MAX_DELTA
             if (backOff) MealHypothesisState(MealHypothesis.RECOVERING, 0, 0.0, 0.0, true, lastAgeMs = enterMs)
             else MealHypothesisState(state, age + bumped, 0.0, 0.0, true, lastAgeMs = tickMs)
         }
@@ -565,10 +597,11 @@ fun step(
             // still well above target, resume COMMITTED (1.0× sustained dosing) rather than dribble
             // at 0.4× through a second rise. Resumes COMMITTED — NOT a second CONFIRMED commit-shot —
             // so committedInSession stays true and the Fix 6 multi-CONFIRMED guard is untouched.
+            // Two routes: re-acceleration, or a fast rise with any acceleration (RECOVERING_REENGAGE_RISE_DELTA).
             val reEngage = age >= RECOVERING_REENGAGE_MIN_AGE &&
-                deltaAccl > RECOVERING_REENGAGE_ACCL &&
-                delta > RECOVERING_REENGAGE_DELTA &&
-                currentOffset > RECOVERING_REENGAGE_OFFSET_MGDL
+                currentOffset > RECOVERING_REENGAGE_OFFSET_MGDL &&
+                ((deltaAccl > RECOVERING_REENGAGE_ACCL && delta > RECOVERING_REENGAGE_DELTA) ||
+                    delta > RECOVERING_REENGAGE_RISE_DELTA)
             when {
                 reEngage -> MealHypothesisState(MealHypothesis.COMMITTED, 0, 0.0, 0.0, true, lastAgeMs = enterMs)
                 // EITHER condition exits to IDLE (more permissive than entry — easier to leave RECOVERING).

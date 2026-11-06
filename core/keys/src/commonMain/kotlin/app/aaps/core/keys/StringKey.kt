@@ -250,6 +250,9 @@ enum class StringKey(
     // value (the confirm-tranche threshold). A stored value that differs from it and from the factory
     // default was set by hand and is kept. Never read for dosing.
     ApsBoostV5AutoConfigWritten(key = "boost_v5_autoconfig_written", defaultValue = "", title = KeysStrings.pref_title_boost_v5_autoconfig_pending, defaultedBySM = true),
+    // Shadow only: the pre-window hold candidate's own SleepStateDetector.State, under its own key so the
+    // live state's persisted JSON is unchanged. Read by nothing except the shadow.
+    ApsBoostSleepPreWindowShadow(key = "boost_sleep_prewindow_shadow", defaultValue = "", title = KeysStrings.pref_title_boost_v5_autoconfig_pending, defaultedBySM = true),
     ApsBoostV5RedriveSummary(key = "boost_v5_redrive_summary", defaultValue = "", title = KeysStrings.pref_title_boost_v5_redrive_summary, defaultedBySM = true),
     ApsBoostV5RedriveHistory(key = "boost_v5_redrive_history", defaultValue = "", title = KeysStrings.pref_title_boost_v5_redrive_history, defaultedBySM = true),
     ApsBoostHistorySyncSummary(key = "boost_history_sync_summary", defaultValue = "", title = KeysStrings.pref_title_boost_history_sync_summary, defaultedBySM = true, exportable = false),

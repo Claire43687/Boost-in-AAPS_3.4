@@ -39,6 +39,7 @@ import kotlin.math.min
  *   anchorHour the participant's quiet hour, where the day is cut
  *   dayStartMs the anchor instant of the day in progress
  *   dayBuckets the cumulative delivery observed in the day so far, by half hour
+ *   firstBucket, lastBucket  the first and last five-minute buckets of that day a cycle saw
  *   prevTotal  the previous day's completed total
  */
 class BoostVwaTddShadow(
@@ -59,6 +60,7 @@ class BoostVwaTddShadow(
         const val WARM_SLICES = 48                 // half-hour slices used to read a past day
         const val WARM_DAYS = 7                    // days of history folded in, one per cycle
         const val WARM_RETRY_MS = 6 * 60 * 60 * 1000L  // wait after an empty past day before reading it again
+        const val EDGE_BUCKETS = 12                // a day is whole if seen within an hour of each end
 
         /**
          * Population delivery curve, cumulative share of a day by five-minute bucket from the
@@ -138,6 +140,8 @@ class BoostVwaTddShadow(
     private var dayStartMs: Long = 0L
     private var dayBuckets: DoubleArray = DoubleArray(BUCKETS)
     private var prevTotal: Double = 0.0
+    private var firstBucket: Int = BUCKETS          // none seen yet
+    private var lastBucket: Int = -1
     private var loaded = false
 
     /** The curve expressed in units rather than shares, rebuilt when the day rolls. */
@@ -164,6 +168,8 @@ class BoostVwaTddShadow(
         val elapsed = nowMs - dayStartMs
         val bucket = min(BUCKETS - 1, max(0, (elapsed / BUCKET_MS).toInt()))
         dayBuckets[bucket] = max(dayBuckets[bucket], deliveredSinceDayStart)
+        firstBucket = min(firstBucket, bucket)
+        lastBucket = max(lastBucket, bucket)
 
         val fraction = curve[bucket]
         val usedPrev: Boolean
@@ -223,25 +229,36 @@ class BoostVwaTddShadow(
         if (dayStartMs == 0L) {
             dayStartMs = anchorFor(nowMs)
             dayBuckets = DoubleArray(BUCKETS)
+            firstBucket = BUCKETS; lastBucket = -1
             return
         }
         if (nowMs - dayStartMs < DAY_MS) return
-        foldDayIntoCurve()
+        // Only a day seen from its start to its end has a shape. A day the loop joined part-way
+        // (an install or upgrade, or the app stopped for hours) reads as nothing delivered before
+        // the first cycle, and folding that in at a weight near 0.8 collapses the curve and puts
+        // the next day's blend on its upper bound for most of the day.
+        val seenToEnd = lastBucket >= BUCKETS - 1 - EDGE_BUCKETS
+        if (firstBucket <= EDGE_BUCKETS && seenToEnd) foldDayIntoCurve(dayBuckets)
+        else logInfo("VwaTdd: day seen from bucket $firstBucket to $lastBucket, not folded into the curve")
+        // The cumulative reading is the day's real total whenever the end was seen, even if the
+        // start was not, so it can carry the next morning; a day cut short cannot.
+        prevTotal = if (seenToEnd) dayBuckets.max() else 0.0
         dayStartMs = anchorFor(nowMs)
         dayBuckets = DoubleArray(BUCKETS)
+        firstBucket = BUCKETS; lastBucket = -1
     }
 
-    /** Normalise the completed day and shrink it into the curve by how many days it rests on. */
-    private fun foldDayIntoCurve() {
+    /** Normalise a completed day and shrink it into the curve by how many days it rests on. */
+    private fun foldDayIntoCurve(buckets: DoubleArray) {
         // The day's total is the largest cumulative figure seen, not the last bucket's. A cycle
         // need not land in the final half hour, and requiring one meant the curve never learned.
         var total = 0.0
-        for (v in dayBuckets) total = max(total, v)
+        for (v in buckets) total = max(total, v)
         if (total < MIN_DAY_UNITS) return
         val observed = DoubleArray(BUCKETS)
         var running = 0.0
         for (i in 0 until BUCKETS) {
-            running = max(running, dayBuckets[i])          // the series is cumulative already
+            running = max(running, buckets[i])             // the series is cumulative already
             observed[i] = (running / total).coerceIn(0.0, 1.0)
         }
         val n = curveDays + 1
@@ -255,7 +272,6 @@ class BoostVwaTddShadow(
         val last = curve[BUCKETS - 1]
         if (last > 0.0) for (i in 0 until BUCKETS) curve[i] = curve[i] / last
         curveDays = n
-        prevTotal = total
     }
 
     private fun anchorFor(nowMs: Long): Long {
@@ -282,6 +298,10 @@ class BoostVwaTddShadow(
             anchorHour = o.optInt("anchorHour", DEFAULT_ANCHOR_HOUR)
             dayStartMs = o.optLong("dayStartMs", 0L)
             prevTotal = o.optDouble("prevTotal", 0.0)
+            // State written before these were kept has no record of which part of the day was
+            // seen, so that day is treated as partial and left out of the curve.
+            firstBucket = o.optInt("firstBucket", BUCKETS)
+            lastBucket = o.optInt("lastBucket", -1)
             o.optJSONArray("dayBuckets")?.let { arr ->
                 if (arr.length() == BUCKETS) {
                     for (i in 0 until BUCKETS) dayBuckets[i] = arr.optDouble(i, 0.0)
@@ -302,6 +322,8 @@ class BoostVwaTddShadow(
                 .put("dayStartMs", dayStartMs)
                 .put("prevTotal", prevTotal)
                 .put("dayBuckets", org.json.JSONArray(dayBuckets.toList()))
+                .put("firstBucket", firstBucket)
+                .put("lastBucket", lastBucket)
             saveState(o.toString())
         } catch (e: Exception) {
             logInfo("VwaTdd: state persist failed (${e.message})")
@@ -330,7 +352,7 @@ class BoostVwaTddShadow(
      * The half-hour slices are interpolated onto the five-minute grid. A seed does not need
      * five-minute detail; the live observation supplies that from the first day forward.
      *
-     * @param totalBetween returns units delivered between two hour offsets from now, or null
+     * @param totalBetween returns units delivered between two instants (ms), or null
      *        where the phone cannot answer, in which case warming stops rather than guessing.
      */
     fun warmFromHistory(nowMs: Long, totalBetween: (Long, Long) -> Double?) {
@@ -339,13 +361,14 @@ class BoostVwaTddShadow(
         if (nowMs < warmRetryAtMs) return
 
         val dayBack = warmedDays + 1L                       // 1 = yesterday
-        val sliceH = 24.0 / WARM_SLICES
+        // The past day is cut at the anchor like a live one. Hour offsets from now put the cut
+        // wherever the phone happened to be, and whole hours made every other half-hour slice empty.
+        val dayStart = anchorFor(nowMs) - dayBack * DAY_MS
+        val sliceMs = DAY_MS / WARM_SLICES
         val cumulative = DoubleArray(WARM_SLICES)
         var running = 0.0
         for (i in 0 until WARM_SLICES) {
-            val endH = -(dayBack * 24L) + ((i + 1) * sliceH).toLong()
-            val startH = -(dayBack * 24L) + (i * sliceH).toLong()
-            val units = totalBetween(startH, endH) ?: return   // stop rather than invent
+            val units = totalBetween(dayStart + i * sliceMs, dayStart + (i + 1) * sliceMs) ?: return   // stop rather than invent
             running += max(0.0, units)
             cumulative[i] = running
         }
@@ -358,7 +381,9 @@ class BoostVwaTddShadow(
             return
         }
         warmedDays++
-        // onto the five-minute grid, then folded in as an observed day would be
+        // onto the five-minute grid, then folded in as an observed day would be. A separate array,
+        // so the day in progress keeps what it has seen.
+        val past = DoubleArray(BUCKETS)
         val perBucket = BUCKETS / WARM_SLICES
         var prev = 0.0
         for (i in 0 until WARM_SLICES) {
@@ -367,12 +392,11 @@ class BoostVwaTddShadow(
             for (k in 0 until perBucket) {
                 val f = (k + 1).toDouble() / perBucket
                 val v = lo + (hi - lo) * f
-                dayBuckets[i * perBucket + k] = max(prev, v) * total
+                past[i * perBucket + k] = max(prev, v) * total
                 prev = max(prev, v)
             }
         }
-        foldDayIntoCurve()
-        dayBuckets = DoubleArray(BUCKETS)
+        foldDayIntoCurve(past)
         persist()
         logInfo("VwaTdd: warmed day -$dayBack from history, curveDays=$curveDays")
     }

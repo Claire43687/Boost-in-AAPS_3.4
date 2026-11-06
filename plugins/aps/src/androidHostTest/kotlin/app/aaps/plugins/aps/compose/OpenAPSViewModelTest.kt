@@ -3,6 +3,7 @@ package app.aaps.plugins.aps.compose
 import app.aaps.core.interfaces.aps.APS
 import app.aaps.core.interfaces.aps.APSResult
 import app.aaps.core.interfaces.aps.OapsProfileBoost
+import app.aaps.core.interfaces.aps.RT
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.plugins.aps.events.EventOpenAPSUpdateGui
@@ -89,6 +90,100 @@ internal class OpenAPSViewModelTest {
         assertThat(rows).doesNotContainKey("lgsThreshold")
     }
 
+    @Test
+    fun uiState_listsAutoConfigBreadcrumbs_asRows() {
+        // Shaped like a 4.0 Boost reason, shortened. zz is a code with no description, shown as written.
+        val reason = "COB: 0; autocfg=applied=0,keptUser=1@2026-01-01T08:00:00.000Z,tr=KEPT_USER_TUNED/d=0.35/kept:user-set,ndw=PROFILE_CHANGED; " +
+            "autordv=@2026-01-08T08:00:00.000Z,win=28d,held-CommittedCapU:2.35,aec=KEPT_USER_TUNED/zz=1; sleep=AWAKE; "
+        val result = mock<APSResult>()
+        whenever(result.rawData()).thenReturn(RT(runningDynamicIsf = false, reason = StringBuilder(reason)))
+        whenever { result.resultAsString() }.thenReturn("")
+        whenever(apsPlugin.lastAPSResult).thenReturn(result)
+        whenever(dateUtil.fromISODateString("2026-01-08T08:00:00.000Z")).thenReturn(1_000L)
+        whenever(dateUtil.dateAndTimeString(any())).thenReturn("8 Jan 08:00")
+
+        val section = viewModel().uiState.value.sections.single { it.title == ApsStrings.openapsma_autoconfig_label }
+
+        assertThat(section.collapsedByDefault).isTrue()
+        assertThat(section.rows).containsExactly(
+            KeyValueRow("", "First set-up"),
+            KeyValueRow("Settings applied", "0"),
+            KeyValueRow("Settings kept as you set them", "1"),
+            KeyValueRow("Run at", "8 Jan 08:00"),
+            KeyValueRow("Confirm-tranche threshold", "kept user tuned"),
+            KeyValueRow("   Derived from your episodes", "0.35"),
+            KeyValueRow("   Reason", "kept user set"),
+            KeyValueRow("Insulin-need watch", "profile changed"),
+            KeyValueRow("", "Latest re-derivation"),
+            KeyValueRow("Run at", "8 Jan 08:00"),
+            KeyValueRow("History window", "28d"),
+            KeyValueRow("Suggestion held back: CommittedCapU", "2.35"),
+            KeyValueRow("Aggressive early confirm", "kept user tuned"),
+            KeyValueRow("   zz", "1")
+        ).inOrder()
+    }
+
+    @Test
+    fun uiState_hasNoAutoConfigSection_whenReasonCarriesNoBreadcrumb() {
+        val result = mock<APSResult>()
+        whenever(result.rawData()).thenReturn(RT(runningDynamicIsf = false, reason = StringBuilder("COB: 0; sleep=AWAKE; ")))
+        whenever { result.resultAsString() }.thenReturn("")
+        whenever(apsPlugin.lastAPSResult).thenReturn(result)
+        whenever(dateUtil.dateAndTimeString(any())).thenReturn("")
+
+        assertThat(viewModel().uiState.value.sections.map { it.title }).doesNotContain(ApsStrings.openapsma_autoconfig_label)
+    }
+
+    private fun heartRateRows(profile: OapsProfileBoost): List<KeyValueRow> {
+        val result = mock<APSResult>()
+        whenever(result.oapsProfileBoost).thenReturn(profile)
+        whenever { result.resultAsString() }.thenReturn("")
+        whenever(apsPlugin.lastAPSResult).thenReturn(result)
+        whenever(dateUtil.dateAndTimeString(any())).thenReturn("")
+        return viewModel().uiState.value.sections.single { it.title == ApsStrings.hr_section_label }.rows
+    }
+
+    @Test
+    fun uiState_heartRateSection_showsTheReadingInWords() {
+        val rows = heartRateRows(boostProfile().apply {
+            hr_integration = true; hr_avg_bpm = 91.6; hr_reserve_pct = 26.4; hr_zone = "zone1"
+            hr_state = "MODERATE_AEROBIC"; hr_confidence = "MEDIUM"; hr_resting_bpm = 58; hr_resting_learned = true
+            hr_max_bpm = 180; hr_window_min = 15; activity_state = "activity"; hr_summary = "HR: avg=91.6 bpm"
+        })
+
+        assertThat(rows).containsExactly(
+            KeyValueRow("Average over 15 min", "92 bpm"),
+            KeyValueRow("Share of heart-rate reserve", "26%"),
+            KeyValueRow("Zone", "zone1"),
+            KeyValueRow("Heart rate and steps read as", "moderate aerobic, medium confidence"),
+            KeyValueRow("Resting rate (learned)", "58 bpm"),
+            KeyValueRow("Maximum rate", "180 bpm"),
+            KeyValueRow("Activity state this cycle", "activity"),
+            KeyValueRow("Details", "HR: avg=91.6 bpm")
+        ).inOrder()
+        // The hr_ fields are not repeated in the Profile section.
+        val profileKeys = viewModel().uiState.value.sections.single { it.title == ApsStrings.openapsma_profile_label }.rows.map { it.key }
+        assertThat(profileKeys.filter { it.startsWith("hr_") }).isEmpty()
+    }
+
+    @Test
+    fun uiState_heartRateSection_saysWhenThereIsNoUsableReading() {
+        val rows = heartRateRows(boostProfile().apply {
+            hr_integration = true; hr_zone = "none"; hr_resting_bpm = 60; hr_max_bpm = 180; hr_window_min = 15
+        })
+
+        assertThat(rows.first()).isEqualTo(KeyValueRow("", "No usable heart rate in the last 15 min. Activity is judged from steps only."))
+        assertThat(rows).contains(KeyValueRow("Resting rate (setting)", "60 bpm"))
+        assertThat(rows.map { it.key }).doesNotContain("Zone")
+    }
+
+    @Test
+    fun uiState_heartRateSection_saysWhenIntegrationIsOff() {
+        val rows = heartRateRows(boostProfile())
+
+        assertThat(rows).containsExactly(KeyValueRow("", "Heart-rate integration is off. Activity is judged from steps only."))
+    }
+
     private fun boostProfile() = OapsProfileBoost(
         dia = 10.0, min_5m_carbimpact = 8.0, max_iob = 8.0, max_daily_basal = 1.0, max_basal = 8.0,
         min_bg = 86.0, max_bg = 86.0, target_bg = 86.0, carb_ratio = 10.0, sens = 68.5,
@@ -105,8 +200,8 @@ internal class OpenAPSViewModelTest {
         dynISFBgCap = 210.0, dynISFBgCapped = 159.0, sensNormalTarget = 68.5, normalTarget = 99.0, dynISFvelocity = 1.0,
         insulinPeak = 38,
         boostActive = true, profileSwitch = 100, boost_bolus = 2.1, boost_maxIOB = 8.0,
-        Boost_InsulinReq = 90.0, boost_scale = 1.2,
-        enableCircadianISF = false, allowBoost_with_high_temptarget = false,
+        Boost_InsulinReq = 90.0, boost_scale = 1.2, boost_percent_scale = 200.0,
+        enableBoostPercentScale = true, enableCircadianISF = false, allowBoost_with_high_temptarget = false,
         recentSteps5Minutes = 0, recentSteps15Minutes = 0, recentSteps30Minutes = 0, recentSteps60Minutes = 0,
         recentLowBG = 999.0, recentBrakingProduct = 0.0, dynIsfMode = true,
     )

@@ -158,6 +158,7 @@ boost_night_mode_disable_with_low_tt|BooleanKey|true
 boost_night_mode_enabled|BooleanKey|true
 boost_night_mode_end|StringKey|true
 boost_night_mode_start|StringKey|true
+boost_percent_scale_factor|DoubleKey|true
 boost_post_exercise_min_duration|IntKey|true
 boost_post_exercise_recovery_enabled|BooleanKey|true
 boost_post_exercise_recovery_hours|DoubleKey|true
@@ -170,6 +171,7 @@ boost_sleep_history|StringKey|true
 boost_sleep_hysteresis_min|IntKey|true
 boost_sleep_in_hrs|DoubleKey|true
 boost_sleep_in_steps|IntKey|true
+boost_sleep_prewindow_shadow|StringKey|true
 boost_sleep_state|StringKey|true
 boost_start_time|StringKey|true
 boost_trial_seed|StringKey|true
@@ -273,6 +275,7 @@ dura_ISF_weight|DoubleKey|true
 dynisf_adjust_sensitivity|BooleanKey|true
 eat_reminder|StringNonKey|false
 email_for_crash_report|StringKey|true
+enableBoostPercentScale|BooleanKey|true
 enableBoost_with_high_temptarget|BooleanKey|true
 enableCircadianISF|BooleanKey|true
 enableSMB_after_carbs|BooleanKey|true

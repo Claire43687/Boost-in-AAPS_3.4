@@ -1,6 +1,7 @@
 package app.aaps.plugins.aps.openAPSBoostV5
 
 import app.aaps.core.keys.DoubleKey
+import app.aaps.core.keys.IntKey
 import app.aaps.core.keys.StringKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.plugins.aps.getBoostDosing
@@ -49,6 +50,32 @@ internal object BoostV5AutoConfigApply {
      * (AdaptiveDoublePreference persists floats), so exact Double equality would be fragile.
      */
     private const val DEFAULT_EPS = 1e-4
+
+    /**
+     * Boost's values for the two "max minutes of basal to limit SMB" settings: 15 for
+     * the standard one and 20 for UAM, which most of the cohort already ran. They are AndroidAPS
+     * settings rather than Boost's, and they size every microbolus V6 does not size itself: the plain
+     * oref1 dose given while Boost's gate is closed (night window, high temp target, sleep), and the V1
+     * dose V6 is held to outside the meal states. At 120 minutes and a 1.0 U/h basal a single microbolus
+     * can reach 2 U.
+     * Auto-config only lowers them: a value at or below its ceiling is left alone. It runs every V6
+     * cycle, so under V6 a value above the ceiling is unreachable; auto-config otherwise never makes a
+     * setting unreachable, and the exception is accepted because it only ever tightens.
+     */
+    val smbBasalMinutesCeilings = mapOf(
+        IntKey.ApsMaxMinutesOfBasalToLimitSmb to 15,
+        IntKey.ApsUamMaxMinutesOfBasalToLimitSmb to 20
+    )
+
+    /** Lowers each of [smbBasalMinutesCeilings] that is above its ceiling; returns those changed with their previous values. */
+    fun capSmbBasalMinutes(read: (IntKey) -> Int, write: (IntKey, Int) -> Unit): List<Pair<IntKey, Int>> =
+        smbBasalMinutesCeilings.mapNotNull { (key, ceiling) ->
+            val value = read(key)
+            if (value > ceiling) {
+                write(key, ceiling)
+                key to value
+            } else null
+        }
 
     /**
      * Max acceptable 14-day time-below-70 (%) for auto-APPLYING a dose-cap RAISE. At or below this,

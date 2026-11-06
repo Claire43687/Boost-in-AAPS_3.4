@@ -37,6 +37,19 @@ object SleepHistoryTracker {
     private const val WINDOW_MS = WINDOW_DAYS * 24L * 60L * 60L * 1000L
     private const val MIN_SESSIONS_FOR_LEARNED = 7
 
+    // Shadow only. The learned sleep ONSET counts every session start, while the
+    // learned WAKE is filtered to genuine wakes. That asymmetry has no justification in the code
+    // and drags the onset late: a spurious mid-night wake splits one night into two sessions and
+    // the second session's start is then learned as a bedtime, which moves the learned onset later.
+    //
+    // Two corrections are computed alongside the shipped value and logged. Neither is used.
+    //   first-of-night  the earliest onset in each local night, which is what a bedtime is
+    //   gap-merged      sessions separated by less than GAP_MERGE_MIN awake are treated as one
+    // A duration filter was considered and rejected: it keeps the LONGER fragment, which is
+    // usually the later one, so it would move the onset the wrong way.
+    private const val GAP_MERGE_MIN = 90
+    private const val NIGHT_BOUNDARY_MIN = 12 * 60      // nights run local midday to midday
+
     /**
      * A closed sleep session.
      *
@@ -131,7 +144,10 @@ object SleepHistoryTracker {
         val restingHrBpm: Int? = null,
         val daytimeHrBpm: Int? = null,
         val restingHrSampleCount: Int = 0,
-        val daytimeHrSampleCount: Int = 0
+        val daytimeHrSampleCount: Int = 0,
+        // shadow-only alternatives to sleepStartMinAvg; logged, never consumed
+        val sleepStartMinFirstOfNight: Int? = null,
+        val sleepStartMinGapMerged: Int? = null
     )
 
     /** Called by the plugin when SleepStateDetector transitions AWAKE→SLEEPING. */
@@ -178,6 +194,32 @@ object SleepHistoryTracker {
     /** Returns wakeMs of the latest closed session, or null if none. Plugin uses this to bound the daytime window. */
     fun lastWakeMs(h: History): Long? = h.sessions.maxByOrNull { it.wakeMs }?.wakeMs
 
+    /** Local night index, running midday to midday, so 23:30 and 01:15 share a night. */
+    private fun nightIndex(utcMs: Long, localOffsetMs: Long): Long =
+        Math.floorDiv(utcMs + localOffsetMs - NIGHT_BOUNDARY_MIN * 60_000L, 24L * 60 * 60 * 1000)
+
+    /** Earliest onset in each local night. Shadow only. */
+    fun firstOfNightOnsets(h: History, localOffsetMs: Long): List<Int> =
+        h.sessions.groupBy { nightIndex(it.sleepStartMs, localOffsetMs) }
+            .mapNotNull { (_, v) -> v.minByOrNull { it.sleepStartMs }?.sleepStartMs }
+            .map { msToMinOfDay(it, localOffsetMs) }
+
+    /** Onsets after merging sessions separated by less than GAP_MERGE_MIN awake. Shadow only. */
+    fun gapMergedOnsets(h: History, localOffsetMs: Long): List<Int> {
+        val sorted = h.sessions.sortedBy { it.sleepStartMs }
+        val starts = mutableListOf<Long>()
+        var openStart: Long? = null
+        var lastWake = 0L
+        for (sn in sorted) {
+            if (openStart == null || sn.sleepStartMs - lastWake >= GAP_MERGE_MIN * 60_000L) {
+                openStart = sn.sleepStartMs
+                starts.add(sn.sleepStartMs)
+            }
+            lastWake = sn.wakeMs
+        }
+        return starts.map { msToMinOfDay(it, localOffsetMs) }
+    }
+
     /** Compute aggregates over the rolling window, with one UTC offset for every session. */
     fun aggregate(h: History, localOffsetMs: Long): Aggregate = aggregate(h) { localOffsetMs }
 
@@ -214,8 +256,16 @@ object SleepHistoryTracker {
         }
         val sleepStartMin = h.sessions.map { msToMinOfDay(it.sleepStartMs, offsetAt(it.sleepStartMs)) }
         val durations = h.sessions.map { ((it.wakeMs - it.sleepStartMs) / 60_000L).toInt() }
+        // The two shadow onsets keep one offset, the newest session's, as they had before.
+        val shadowOffsetMs = offsetAt(h.sessions.maxOf { it.sleepStartMs })
+        val firstNightMins = firstOfNightOnsets(h, shadowOffsetMs)
+        val mergedMins = gapMergedOnsets(h, shadowOffsetMs)
         return Aggregate(
             sleepStartMinAvg = circularMean(sleepStartMin),
+            sleepStartMinFirstOfNight = if (firstNightMins.size >= MIN_SESSIONS_FOR_LEARNED)
+                circularMean(firstNightMins) else null,
+            sleepStartMinGapMerged = if (mergedMins.size >= MIN_SESSIONS_FOR_LEARNED)
+                circularMean(mergedMins) else null,
             wakeMinAvg = wakeAvg,
             sleepDurationMinAvg = if (durations.isNotEmpty()) durations.sum() / durations.size else null,
             sessionCount = h.sessions.size,

@@ -12,8 +12,7 @@ found in this work to what now catches it.
 
 Boost on upstream AndroidAPS 4.0.0. Boost is one selectable plugin: the V6 observe, confirm and commit
 pipeline on the engine (`DetermineBasalBoost`, the ML risk and meal models, sleep and step tracking),
-with every SMB outside the meal pipeline sized by the two oref tiers. The other six tiers decide only
-the Boost high temp and the fast-carb scale. Dependency injection is Metro rather than Dagger, the project is Kotlin
+with the base SMB sized by the V1 Boost tiers (1 to 8), which also bound V6 outside a meal. Dependency injection is Metro rather than Dagger, the project is Kotlin
 Multiplatform, and the Boost engine sits in `plugins/aps/src/androidMain` with its tests in
 `androidHostTest`.
 
@@ -152,5 +151,7 @@ Low: `_docs/`, this file and other documents. The items below on personal data.
 | A dead function hid a lost caller in the Bluetooth device picker (CLAUDE.md) | Item 19 |
 | A piped gradle reported `tail`'s exit code (CLAUDE.md) | Item 17 |
 | Insulin-need watch ran during a history download, and `TddCalculator` kept the partial days it computed for auto-config to read | Nothing automated; the `historyDownloadHolds` check in `scheduleConfigEvaluation` |
+| The VWA-TDD shadow folded the 4.0 upgrade day into its curve as a whole day, read delivery over whole hours since the anchor, and warmed from days cut at the phone's current hour | Five `BoostVwaTddShadowTest` cases; nothing tests the caller's live interval |
+| SMB minutes ceiling read a Simple Mode mask of 30, rewrote every cycle and stacked notices; 4.0 defaults differ from 3.4 | Nothing automated: `SmbBasalMinutesCeilingTest` uses a plain map. Emulator check in Simple Mode |
 
 A new correction in this repository adds a row here naming its check, or "nothing yet".

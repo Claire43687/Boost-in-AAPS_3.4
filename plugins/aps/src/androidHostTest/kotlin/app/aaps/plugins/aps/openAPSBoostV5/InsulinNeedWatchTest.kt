@@ -23,20 +23,20 @@ class InsulinNeedWatchTest {
     private fun days(tdds: List<Double>, basal: (Int) -> Double? = { 8.0 }) =
         tdds.mapIndexed { i, x -> Day(t0 + i * dayMs, x, basal(i)) }
 
-    @Test fun `a sustained rise is flagged on 11 October and not on 8 October`() {
-        // index 35 is 11 October, index 32 is 8 October
-        val on11 = InsulinNeedWatch.evaluate(days(october.take(36)))
-        assertThat(on11.status).isEqualTo(Status.ABOVE)
-        assertThat(on11.recentMeanU).isWithin(0.05).of((59.6 + 41.2 + 54.5) / 3)
-        assertThat(on11.baselineDays).isEqualTo(30)
-        assertThat(on11.z).isGreaterThan(2.0)
-        assertThat(InsulinNeedWatch.evaluate(days(october.take(33))).status).isEqualTo(Status.WITHIN)
+    @Test fun `a sustained rise is flagged on 12 October and not on 11 October`() {
+        // index 36 is 12 October, index 35 is 11 October
+        val on12 = InsulinNeedWatch.evaluate(days(october.take(37)))
+        assertThat(on12.status).isEqualTo(Status.ABOVE)
+        assertThat(on12.recentMeanU).isWithin(0.05).of((43.6 + 59.6 + 41.2 + 54.5 + 50.6) / 5)
+        assertThat(on12.baselineDays).isEqualTo(30)
+        assertThat(on12.z).isGreaterThan(1.5)
+        assertThat(InsulinNeedWatch.evaluate(days(october.take(36))).status).isEqualTo(Status.WITHIN)
     }
 
     @Test fun `a steady month is within and a sustained fall is below`() {
-        val steady = List(33) { 30.0 + (it % 5) - 2 }
+        val steady = List(35) { 30.0 + (it % 5) - 2 }
         assertThat(InsulinNeedWatch.evaluate(days(steady)).status).isEqualTo(Status.WITHIN)
-        val falling = steady.dropLast(3) + listOf(22.0, 21.0, 23.0)
+        val falling = steady.dropLast(5) + listOf(22.0, 21.0, 23.0, 22.0, 24.0)
         assertThat(InsulinNeedWatch.evaluate(days(falling)).status).isEqualTo(Status.BELOW)
     }
 
@@ -47,10 +47,10 @@ class InsulinNeedWatchTest {
 
     @Test fun `a near-empty day is a gap in the record, not a dose`() {
         val base = List(30) { 30.0 + (it % 5) - 2 }
-        // a gap in the window leaves two usable days: no verdict rather than a BELOW
-        assertThat(InsulinNeedWatch.evaluate(days(base + listOf(30.0, 2.0, 31.0))).status).isEqualTo(Status.FEW_DAYS)
+        // a gap in the window leaves four usable days: no verdict rather than a BELOW
+        assertThat(InsulinNeedWatch.evaluate(days(base + listOf(30.0, 31.0, 2.0, 31.0, 30.0))).status).isEqualTo(Status.FEW_DAYS)
         // a gap in the month is left out, so it does not widen the spread and hide a real rise
-        val withGap = base.toMutableList().also { it[10] = 1.5 } + listOf(40.0, 41.0, 42.0)
+        val withGap = base.toMutableList().also { it[10] = 1.5 } + listOf(40.0, 41.0, 42.0, 41.0, 40.0)
         val r = InsulinNeedWatch.evaluate(days(withGap))
         assertThat(r.baselineDays).isEqualTo(29)
         assertThat(r.status).isEqualTo(Status.ABOVE)
@@ -58,7 +58,7 @@ class InsulinNeedWatchTest {
 
     @Test fun `a profile change is reported as that, not as a change in need`() {
         // undiluted U200 halves the pump units of the profile and of every dose
-        val tdds = List(30) { 30.0 + (it % 5) - 2 } + listOf(16.0, 15.0, 15.5)
+        val tdds = List(30) { 30.0 + (it % 5) - 2 } + listOf(16.0, 15.0, 15.5, 16.0, 15.0)
         val r = InsulinNeedWatch.evaluate(days(tdds) { i -> if (i < 30) 16.0 else 8.0 })
         assertThat(r.status).isEqualTo(Status.PROFILE_CHANGED)
         // the same days with an unchanged profile would have been read as a fall
@@ -68,9 +68,9 @@ class InsulinNeedWatchTest {
     }
 
     @Test fun `a missing yesterday leaves the window short instead of moving it back`() {
-        val d = days(october.take(36))
+        val d = days(october.take(37))
         val yesterday = d.last().startMs
-        // drop 11 October: the window is still 9 to 11 October, now with two days, so no verdict
+        // drop 12 October: the window is still 8 to 12 October, now with four days, so no verdict
         assertThat(InsulinNeedWatch.evaluate(d.dropLast(1), yesterday).status).isEqualTo(Status.FEW_DAYS)
         assertThat(InsulinNeedWatch.evaluate(d, yesterday).status).isEqualTo(Status.ABOVE)
     }
@@ -82,18 +82,18 @@ class InsulinNeedWatchTest {
     }
 
     @Test fun `a direction is not repeated within 14 days, the other direction is`() {
-        val above = InsulinNeedWatch.evaluate(days(october.take(36)))
+        val above = InsulinNeedWatch.evaluate(days(october.take(37)))
         val now = t0 + 40 * dayMs
         assertThat(InsulinNeedWatch.shouldNotify(above, 0L, 0L, now)).isTrue()
         assertThat(InsulinNeedWatch.shouldNotify(above, now - 13 * dayMs, 0L, now)).isFalse()
         assertThat(InsulinNeedWatch.shouldNotify(above, now - 14 * dayMs, 0L, now)).isTrue()
         assertThat(InsulinNeedWatch.shouldNotify(above, 0L, now - dayMs, now)).isTrue()
-        val within = InsulinNeedWatch.evaluate(days(october.take(33)))
+        val within = InsulinNeedWatch.evaluate(days(october.take(36)))
         assertThat(InsulinNeedWatch.shouldNotify(within, 0L, 0L, now)).isFalse()
     }
 
     @Test fun `the breadcrumb token carries the verdict`() {
-        assertThat(InsulinNeedWatch.evaluate(days(october.take(36))).token()).matches("ndw=ABOVE/z=\\d\\.\\d/p=\\+\\d+/n=30")
+        assertThat(InsulinNeedWatch.evaluate(days(october.take(37))).token()).matches("ndw=ABOVE/z=\\d\\.\\d/p=\\+\\d+/n=30")
         assertThat(InsulinNeedWatch.evaluate(days(List(10) { 30.0 })).token()).startsWith("ndw=FEW_DAYS")
     }
 }

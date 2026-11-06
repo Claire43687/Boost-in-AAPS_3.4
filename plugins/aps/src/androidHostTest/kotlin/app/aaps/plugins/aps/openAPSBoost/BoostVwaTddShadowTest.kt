@@ -154,6 +154,16 @@ class BoostVwaTddShadowTest {
         assertThat(s.compute(at(18.5), 10.0, 20.0)!!.curveDays).isEqualTo(BoostVwaTddShadow.WARM_DAYS)
     }
 
+    @Test fun `history is read in half-hour slices of the anchored day before`() {
+        val s = Store().shadow()
+        val asked = mutableListOf<Pair<Long, Long>>()
+        s.warmFromHistory(at(12.0)) { a, b -> asked.add(a to b); 0.5 }
+        assertThat(asked).hasSize(BoostVwaTddShadow.WARM_SLICES)
+        assertThat(asked.first().first).isEqualTo(at(-24.0))
+        assertThat(asked.last().second).isEqualTo(at(0.0))
+        for ((a, b) in asked) assertThat(b - a).isEqualTo(hour / 2)
+    }
+
     @Test fun `a flat history produces a curve close to a straight ramp`() {
         val st = Store()
         val s = st.shadow()
@@ -165,5 +175,65 @@ class BoostVwaTddShadowTest {
         assertThat(c[c.size / 2]).isGreaterThan(0.30)
         assertThat(c[c.size / 2]).isLessThan(0.70)
         assertThat(c.last()).isWithin(1e-9).of(1.0)
+    }
+
+    // The first cycle after an upgrade 18.5 h into the day, with 17.5 U already delivered. Folded
+    // as a whole day, it said nothing was delivered before then, and the curve fell to about a
+    // fifth of its usual share for the next day.
+    @Test fun `a day joined part-way is not folded into the curve but its total carries the next morning`() {
+        val s = Store().shadow()
+        val before = s.curveSnapshot()
+        var h = 18.5
+        while (h < 24.0) { s.compute(at(h), 17.5 + 4.5 * (h - 18.5) / 5.5, 20.0); h += 1.0 / 12 }
+        val next = s.compute(at(24.5), 0.3, 20.0)!!
+        assertThat(s.curveSnapshot().toList()).isEqualTo(before.toList())
+        assertThat(next.curveDays).isEqualTo(0)
+        assertThat(next.usedPreviousDay).isTrue()
+        assertThat(next.projection).isWithin(0.1).of(22.0)
+    }
+
+    @Test fun `a day cut short is not folded and does not carry the next morning`() {
+        val s = Store().shadow()
+        val before = s.curveSnapshot()
+        for (h in 0..10) s.compute(at(h.toDouble()), h + 1.0, 20.0)
+        val next = s.compute(at(24.5), 0.3, 20.0)!!     // the app came back after the anchor
+        assertThat(s.curveSnapshot().toList()).isEqualTo(before.toList())
+        assertThat(next.curveDays).isEqualTo(0)
+        assertThat(next.projection).isWithin(1e-9).of(20.0)   // the seven-day term, not 11 U
+    }
+
+    @Test fun `a day carried over from state without coverage is treated as partial`() {
+        val st = Store()
+        for (h in 0..12) st.shadow().compute(at(h.toDouble()), h + 1.0, 20.0)
+        val o = org.json.JSONObject(st.blob)
+        o.remove("firstBucket"); o.remove("lastBucket")
+        st.blob = o.toString()
+        val s = st.shadow()
+        for (h in 13..23) s.compute(at(h.toDouble()), h + 1.0, 20.0)
+        assertThat(s.compute(at(24.5), 0.3, 20.0)!!.curveDays).isEqualTo(0)
+    }
+
+    @Test fun `warming from history in the middle of a day keeps what the day has seen`() {
+        val flat = { _: Long, _: Long -> 24.0 / BoostVwaTddShadow.WARM_SLICES }
+        val live = { h: Int -> if (h < 8) 0.2 * (h + 1) else 1.6 + 2.0 * (h - 7) }
+        // the same history and the same day, warmed before the day starts and part-way through it
+        val early = Store().shadow()
+        early.warmFromHistory(at(0.0), flat)
+        for (h in 0..23) early.compute(at(h.toDouble()), live(h), 20.0)
+        early.compute(at(24.5), 0.3, 20.0)
+        val mid = Store().shadow()
+        for (h in 0..11) mid.compute(at(h.toDouble()), live(h), 20.0)
+        mid.warmFromHistory(at(11.5), flat)
+        for (h in 12..23) mid.compute(at(h.toDouble()), live(h), 20.0)
+        mid.compute(at(24.5), 0.3, 20.0)
+        assertThat(mid.curveSnapshot().toList()).isEqualTo(early.curveSnapshot().toList())
+    }
+
+    @Test fun `a past day read from history does not become the previous day's total`() {
+        val s = Store().shadow()
+        s.warmFromHistory(at(0.2)) { _, _ -> 30.0 / BoostVwaTddShadow.WARM_SLICES }
+        val r = s.compute(at(0.5), 0.3, 20.0)!!
+        assertThat(r.usedPreviousDay).isTrue()
+        assertThat(r.projection).isWithin(1e-9).of(20.0)   // the seven-day term, not the 30 U past day
     }
 }

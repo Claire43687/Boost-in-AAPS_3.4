@@ -27,6 +27,54 @@
     <string name="constraints">Constraints</string>
     <string name="openapsma_autosensdata_label">Autosens data</string>
     <string name="openapsma_script_debug_data_label">Script debug</string>
+    <string name="openapsma_autoconfig_label">Auto config</string>
+    <string name="autoconfig_crumb_setup">First set-up</string>
+    <string name="autoconfig_crumb_redrive">Latest re-derivation</string>
+    <string name="autoconfig_crumb_histsync">History sync</string>
+    <string name="autoconfig_at">Run at</string>
+    <string name="autoconfig_reason">Reason</string>
+    <string name="hr_section_label">Heart rate</string>
+    <string name="hr_integration_off">Heart-rate integration is off. Activity is judged from steps only.</string>
+    <string name="hr_no_reading">No usable heart rate in the last %1$d min. Activity is judged from steps only.</string>
+    <string name="hr_average" comment="%1$d=minutes averaged, example: Average over 15 min">Average over %1$d min</string>
+    <string name="hr_bpm" comment="%1$d=heart rate in beats per minute, example: 92 bpm">%1$d bpm</string>
+    <string name="hr_reserve">Share of heart-rate reserve</string>
+    <string name="hr_zone">Zone</string>
+    <string name="hr_resting_learned">Resting rate (learned)</string>
+    <string name="hr_resting_setting">Resting rate (setting)</string>
+    <string name="hr_max">Maximum rate</string>
+    <string name="hr_classified">Heart rate and steps read as</string>
+    <string name="hr_state_confidence" comment="%1$s=exercise state, %2$s=confidence. Example: moderate aerobic, high confidence">%1$s, %2$s confidence</string>
+    <string name="hr_activity_state">Activity state this cycle</string>
+    <string name="hr_details">Details</string>
+    <string name="autoconfig_applied">Settings applied</string>
+    <string name="autoconfig_held_tbr">Raises held back (too much time below 70 mg/dL)</string>
+    <string name="autoconfig_kept_user">Settings kept as you set them</string>
+    <string name="autoconfig_held">Held suggestions</string>
+    <string name="autoconfig_tr">Confirm-tranche threshold</string>
+    <string name="autoconfig_ndw">Insulin-need watch</string>
+    <string name="autoconfig_win">History window</string>
+    <string name="autoconfig_ev">Settings checked</string>
+    <string name="autoconfig_ch">Settings changed</string>
+    <string name="autoconfig_skip">Skipped</string>
+    <string name="autoconfig_pr">Primer delivery</string>
+    <string name="autoconfig_aec">Aggressive early confirm</string>
+    <string name="autoconfig_fcc">Fast-carb confirm</string>
+    <string name="autoconfig_prefix_held" comment="%1$s=name of a setting. Example: Suggestion held back: CommittedCapU">Suggestion held back: %1$s</string>
+    <string name="autoconfig_prefix_kept" comment="%1$s=name of a setting. Example: Kept as you set it: PrimerCapU">Kept as you set it: %1$s</string>
+    <string name="autoconfig_prefix_retired" comment="%1$s=name of a setting. Example: No longer managed (you changed it): ConfirmedCapU">No longer managed (you changed it): %1$s</string>
+    <string name="autoconfig_part_tr_d">Derived from your episodes</string>
+    <string name="autoconfig_part_tr_op">In use</string>
+    <string name="autoconfig_part_tr_s">Small-rise episodes (peak under 30 mg/dL)</string>
+    <string name="autoconfig_part_tr_l">Large-rise episodes (peak 75 mg/dL or more)</string>
+    <string name="autoconfig_part_tr_j" comment="Youden's J is the name of a statistic; keep it untranslated">How well it separates them (Youden\'s J)</string>
+    <string name="autoconfig_part_ndw_z">Standard deviations from usual</string>
+    <string name="autoconfig_part_ndw_p">Change from usual, %</string>
+    <string name="autoconfig_part_ndw_n">Days in the comparison</string>
+    <string name="autoconfig_part_pr_tb">Temp basal instead of SMB</string>
+    <string name="autoconfig_part_pr_wc">Counted as well within range</string>
+    <string name="autoconfig_part_switch_value">Value</string>
+    <string name="autoconfig_part_switch_ok">Your history allows it on</string>
     <string name="openapsama_link_to_preference_json_doc_txt">Attention!\nNormally you do not have to change these values below. Please CLICK HERE and READ the text and make sure you UNDERSTAND it before change any of these values.</string>
     <string name="openapsama_link_to_preference_json_doc" translatable="false">http://openaps.readthedocs.io/en/latest/docs/walkthrough/phase-3/beyond-low-glucose-suspend.html</string>
 
@@ -118,7 +166,7 @@
     <string name="openaps_boost">Boost</string>
     <string name="description_boost">Boost based accelerated bolusing with dynamic ISF</string>
     <string name="openaps_boost_v5">Boost</string>
-    <string name="description_boost_v5">Doses for meals without meal announcements. It watches for a meal, confirms it, doses for it and then winds down. Outside a meal it doses like oref1.</string>
+    <string name="description_boost_v5">Doses for meals without meal announcements. It watches for a meal, confirms it, doses for it and then winds down. Outside a meal it doses with the Boost tiers.</string>
     <string name="boost_v1_smb_sizing_title">Boost base-engine SMB sizing</string>
     <string name="boost_stepcount_settings_title">Step Count Settings</string>
     <string name="boost_stepcount_settings_summary">Configure step-based activity and inactivity detection</string>

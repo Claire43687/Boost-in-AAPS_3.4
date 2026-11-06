@@ -457,7 +457,7 @@ class DetermineBasalBoost @Inject constructor(
         // ── Boost Config ──
         consoleError.add("── Boost Config ────────────────────────────")
         consoleError.add("Bolus cap: ${profile.boost_bolus} | maxIOB: ${profile.boost_maxIOB} | scale: ${round(profile.boost_scale, 2)} | insulinReq%: ${profile.Boost_InsulinReq}")
-        consoleError.add("Circadian ISF: ${profile.enableCircadianISF}")
+        consoleError.add("Percent scale: ${profile.enableBoostPercentScale} (${profile.boost_percent_scale}) | Circadian ISF: ${profile.enableCircadianISF}")
 
         // ── State ──
         consoleError.add("── State ───────────────────────────────────")
@@ -1254,6 +1254,7 @@ class DetermineBasalBoost @Inject constructor(
             // Windowed values are sourced from a 6-cycle ring buffer maintained by the
             // plugin; static values come from this cycle's algorithm state.
             val now = java.time.LocalTime.now().hour
+            var mlHypoRiskShadow: Double? = null
             val mlHypoRisk: Double? = run {
                 val rm = riskModel ?: return@run null
                 val featNames = rm.getFeatureNames() ?: return@run null
@@ -1306,6 +1307,9 @@ class DetermineBasalBoost @Inject constructor(
                     )
                     mlRingBuffer.push(current)
                     val features = BoostMlFeatureBuilder.build(featNames, current, mlRingBuffer, statics)
+                    // Shadow: score the refit on the SAME vector, so any difference
+                    // between the two is the model and not the feature build. Delivers nothing.
+                    mlHypoRiskShadow = rm.predictShadow(features)
                     rm.predict(features)
                 }
             }
@@ -1313,6 +1317,20 @@ class DetermineBasalBoost @Inject constructor(
                 rT.mlHypoRisk = round(mlHypoRisk, 3)
                 consoleError.add("── ML Risk Model (observability only) ──────")
                 consoleError.add("ML hypo risk: ${round(mlHypoRisk * 100, 1)}%")
+            }
+            mlHypoRiskShadow?.let {
+                // Logged, never acted on. The two scores are on DIFFERENT scales: the refit is
+                // calibrated to a 7.24% base rate and reads far higher for the same risk, so
+                // comparing either to the other's thresholds is meaningless. What the field data
+                // is for is the ranking and the disagreement, not the level.
+                // Rides in [reason] as a tag rather than as an RT field. Adding ANY field to the
+                // RT data class shifts register allocation in the legacy
+                // DetermineBasalBoostV3MLG3.determine_basal, which sits at the ART method-verifier
+                // limit, and trips a VerifyError at startup. That is not a theory: it is what the
+                // first build of this shadow did, and RT.kt carries the warning.
+                // The KAIROS twin telemetry rides here for the same reason.
+                rT.reason.append("hyposhadow=${round(it, 3)}; ")
+                consoleError.add("ML hypo risk SHADOW (v13, not dosing): ${round(it * 100, 1)}%")
             }
             val mlMealLikely = mealModel?.predictMealLikelihood(
                 cgmMgdl = bg,
@@ -1411,12 +1429,26 @@ class DetermineBasalBoost @Inject constructor(
                 }
 
                 // =============================================================
-                // BOOST SMB SIZING LOGIC
+                // BOOST SMB SIZING LOGIC - Multi-tier escalation
                 // =============================================================
                 val roundSMBTo = 1.0 / profile.bolus_increment
                 val profileSwitch = profile.profileSwitch
 
-                val insulinReqPCT = 100.0 / profile.Boost_InsulinReq
+                var insulinReqPCT = 100.0 / profile.Boost_InsulinReq
+
+                var insulinDivisor: Double
+                val scale_pct: Double
+                if (profile.enableBoostPercentScale) {
+                    scale_pct = round(100.0 / (profile.boost_percent_scale * (profileSwitch / 100.0)), 3)
+                    insulinDivisor = if (bg < 108) {
+                        scale_pct
+                    } else {
+                        insulinReqPCT - boostPercentScaleReduction(bg, insulinReqPCT - scale_pct)
+                    }
+                } else {
+                    scale_pct = insulinReqPCT // fallback
+                    insulinDivisor = insulinReqPCT
+                }
 
                 // Boost factors
                 val uamBoost1 = if (abs(glucose_status.shortAvgDelta) > 0.001) glucose_status.delta / glucose_status.shortAvgDelta else 0.0
@@ -1507,14 +1539,19 @@ class DetermineBasalBoost @Inject constructor(
                 val boostMaxIOB = profile.boost_maxIOB
                 val boost_max = profile.boost_bolus
                 val boost_scale = profile.boost_scale * (profileSwitch / 100.0)
+                var boostInsulinReq = basal
 
                 val COB = meal_data.mealCOB
+                val CR = profile.carb_ratio
 
                 consoleError.add("── SMB Dosing ──────────────────────────────")
-                consoleError.add("InsulinReq%: ${round((1.0 / insulinReqPCT) * 100, 1)}%")
+                consoleError.add("InsulinReq%: ${round((1.0 / insulinReqPCT) * 100, 1)}% | Divisor: ${round(insulinDivisor, 2)} (${round((1.0 / insulinDivisor) * 100, 1)}%)")
+                if (profile.enableBoostPercentScale) {
+                    consoleError.add("Percent scale: ${round(100.0 / scale_pct, 1)}% from ${profile.boost_percent_scale}")
+                }
                 consoleError.add("insulinReq: $insulinReq | UAM Boost1: ${round(uamBoost1, 2)} | UAM Boost2: ${round(uamBoost2, 2)}")
                 consoleError.add("Boost scale: ${round(boost_scale, 2)} (from ${round(profile.boost_scale, 2)}) | Max bolus: $boost_max | MaxIOB: $boostMaxIOB")
-                consoleError.add("Boost ${if (!boostActive) "IN" else ""}ACTIVE | Base insulin: ${round(basal, 2)}U | delta_accl: $delta_accl")
+                consoleError.add("Boost ${if (!boostActive) "IN" else ""}ACTIVE | Base insulin: ${round(boostInsulinReq, 2)}U | delta_accl: $delta_accl")
                 rT.reason.append("UAM Boost 1: ${round(uamBoost1, 2)}; UAM Boost 2: ${round(uamBoost2, 2)}; Delta: ${glucose_status.delta}; ShortAvg: ${glucose_status.shortAvgDelta}; ")
 
                 var microBolus: Double
@@ -1536,30 +1573,139 @@ class DetermineBasalBoost @Inject constructor(
                 consoleError.add("bg=$bg | delta=${round(glucose_status.delta, 1)} | shortAvg=${round(glucose_status.shortAvgDelta, 1)} | delta_accl=$delta_accl")
                 consoleError.add("eventualBG=${round(eventualBG, 0)} | target=$target_bg | IOB=${round(iob_data.iob, 2)}/$boostMaxIOB | COB=$COB | lastCarbAge=$lastCarbAge")
 
-                // ----- Single plugin: only the two oref tiers size the SMB -----
-                // Tiers 1 to 6 no longer size a dose. V6 sizes the meal dose, and outside a meal it is
-                // capped at this engine's dose, so these tiers were what let it past oref sizing.
-                // Their conditions are kept, in the old
-                // order, for two things they did that stay as they were: Tiers 3, 5 and 6 switch on the
-                // Boost high temp (iTimeActive) and the fast-carb scale.
-                val boostTrigger: String? =
-                    if (boostActive && COB > 0 && lastCarbAge < 25) "COB_PRIMARY"
-                    else if (boostActive && COB > 0 && lastCarbAge < 40 && glucose_status.delta > 5) "COB_SECONDARY"
-                    else if (!mlTierDowngrade && !inPostRescueWindow && glucose_status.delta >= 5 && glucose_status.shortAvgDelta >= 3 && uamBoost1 > 1.2 && uamBoost2 > 2 && boostActive && iob_data.iob < boostMaxIOB && boost_scale < 3 && eventualBG > target_bg && bg > 80 && insulinReq > 0) "UAM_BOOST"
-                    else if (!mlTierDowngrade && !inPostRescueWindow && (delta_accl > 5 || glucose_status.delta > 8) && bg > 180 && boostActive && iob_data.iob < boostMaxIOB && boost_scale < 3 && eventualBG > target_bg && insulinReq > 0) "UAM_HIGH_BOOST"
-                    else if (!mlTierDowngrade && !g3HoldActive && !inPostRescueWindow && bg > 110 && bg < 181 && glucose_status.delta > 3 && delta_accl > 0 && eventualBG > target_bg && iob_data.iob < boostMaxIOB && boostActive) "PERCENT_SCALE"
-                    else if (!mlTierDowngrade && !g3HoldActive && delta_accl > 25 && glucose_status.delta > 4 && bg > 110 && iob_data.iob < boostMaxIOB && boostActive && eventualBG > target_bg) "ACCELERATION"
-                    else null
-                if (boostTrigger == "UAM_BOOST" || boostTrigger == "PERCENT_SCALE" || boostTrigger == "ACCELERATION") {
+                // ----- Tier 1: Primary COB handling (< 25 min since carbs) -----
+                if (boostActive && COB > 0 && lastCarbAge < 25) {
+                    consoleError.add(">>> TIER 1: Primary COB handling <<<")
+                    rT.boostTier = "COB_PRIMARY"
+                    rT.insulinReqPctEffective = round((1.0 / insulinReqPCT) * 100, 1)
+                    rT.reason.append("Primary carb handling code operating; lastCarbAge: $lastCarbAge; ")
+                    microBolus = Math.floor(min(insulinReq / insulinReqPCT, insulinReq) * roundSMBTo) / roundSMBTo
+                    consoleError.add("Insulin required % (${(1.0 / insulinReqPCT) * 100}%) applied.")
+                }
+                // ----- Tier 2: Secondary COB handling (< 40 min, delta > 5) -----
+                else if (boostActive && COB > 0 && lastCarbAge < 40 && glucose_status.delta > 5) {
+                    consoleError.add(">>> TIER 2: Secondary COB handling <<<")
+                    rT.boostTier = "COB_SECONDARY"
+                    rT.insulinReqPctEffective = round((1.0 / insulinReqPCT) * 100, 1)
+                    val cob_boost_max = max((COB / CR) / insulinReqPCT, boost_max)
+                    rT.reason.append("Secondary carb handling; boost_max due to COB = $cob_boost_max; lastCarbAge: $lastCarbAge; ")
+                    microBolus = Math.floor(min(insulinReq / insulinReqPCT, cob_boost_max) * roundSMBTo) / roundSMBTo
+                    consoleError.add("Insulin required % (${(1.0 / insulinReqPCT) * 100}%) applied.")
+                }
+                // ----- Tier 3: UAM Boost (strong acceleration with positive delta) -----
+                // Layer B: !mlTierDowngrade gate prevents aggressive UAM Boost firing
+                // when hypo risk exceeds 0.6.
+                // v4.4.4 Fix A v2: !inPostRescueWindow guard prevents dosing into rebound climbs.
+                else if (!mlTierDowngrade && !inPostRescueWindow && glucose_status.delta >= 5 && glucose_status.shortAvgDelta >= 3 && uamBoost1 > 1.2 && uamBoost2 > 2 && boostActive && iob_data.iob < boostMaxIOB && boost_scale < 3 && eventualBG > target_bg && bg > 80 && insulinReq > 0) {
+                    consoleError.add(">>> TIER 3: UAM Boost <<<")
+                    rT.boostTier = "UAM_BOOST"
+                    consoleError.add("Insulin required pre-boost is $insulinReq")
+                    boostInsulinReq = min(boost_scale * boostInsulinReq, boost_max)
+                    if (boostInsulinReq > boostMaxIOB - iob_data.iob) {
+                        boostInsulinReq = boostMaxIOB - iob_data.iob
+                    }
+                    if (delta_accl > 1) {
+                        insulinReqPCT = insulinDivisor
+                    }
+                    if (boostInsulinReq < (insulinReq / insulinReqPCT)) {
+                        microBolus = Math.floor(min(insulinReq / insulinReqPCT, boost_max) * roundSMBTo) / roundSMBTo
+                        rT.reason.append("UAM Boost enacted; SMB equals $microBolus; ")
+                    } else {
+                        microBolus = Math.floor(min(boostInsulinReq, boost_max) * roundSMBTo) / roundSMBTo
+                    }
+                    // Apply graduated fast-carb scaling
+                    if (fastCarbRebound) {
+                        val preFcSmb = microBolus
+                        microBolus = Math.floor(microBolus * fastCarbScale * roundSMBTo) / roundSMBTo
+                        consoleError.add("Fast-carb scale applied: $preFcSmb → $microBolus (${round(fastCarbScale * 100, 0)}%)")
+                        fastCarbScaleApplied = true
+                    }
                     iTimeActive = true
+                    consoleError.add("UAM Boost enacted; SMB equals $boostInsulinReq; Original insulin requirement was $insulinReq")
+                    rT.reason.append("UAM Boost enacted; SMB equals $boostInsulinReq; ")
                 }
-                if (boostTrigger != null) {
-                    rT.reason.append("boostTrigger=$boostTrigger; ")
-                    consoleError.add("Boost trigger (high temp only): $boostTrigger")
+                // ----- Tier 4: UAM High Boost (high BG > 180 with acceleration OR sustained velocity) -----
+                // Layer B: !mlTierDowngrade gate added.
+                // Layer D: added `glucose_status.delta > 8` as an alternative trigger.
+                // delta_accl is percentage acceleration, not velocity. Once a climb
+                // stabilises into a sustained high-delta state (delta tracking
+                // shortAvgDelta), delta_accl drops near zero even though BG is
+                // still rising fast. Without this fallback, sustained climbs fall
+                // through to T7/T8 once acceleration plateaus. delta > 8 mg/dL/5min
+                // ≈ +1.6 mg/dL/min is the same magnitude as Tier 5's `delta > 3`
+                // but stricter, gating on a real sustained rise.
+                // v4.4.4 Fix A v2: !inPostRescueWindow guard added.
+                else if (!mlTierDowngrade && !inPostRescueWindow && (delta_accl > 5 || glucose_status.delta > 8) && bg > 180 && boostActive && iob_data.iob < boostMaxIOB && boost_scale < 3 && eventualBG > target_bg && bg > 80 && insulinReq > 0) {
+                    consoleError.add(">>> TIER 4: UAM High Boost <<<")
+                    rT.boostTier = "UAM_HIGH_BOOST"
+                    consoleError.add("Insulin required pre-boost is $insulinReq")
+                    boostInsulinReq = min(boost_scale * boostInsulinReq, boost_max)
+                    if (boostInsulinReq > boostMaxIOB - iob_data.iob) {
+                        boostInsulinReq = boostMaxIOB - iob_data.iob
+                    }
+                    if (boostInsulinReq < (insulinReq / insulinReqPCT)) {
+                        boostInsulinReq = min(boostInsulinReq + (0.5 * (insulinReq / insulinReqPCT)), insulinReq / insulinReqPCT)
+                        microBolus = Math.floor(min(boostInsulinReq / insulinReqPCT, boost_max) * roundSMBTo) / roundSMBTo
+                        rT.reason.append("UAM High Boost enacted; SMB equals $microBolus; ")
+                    } else {
+                        microBolus = Math.floor(min(boostInsulinReq, boost_max) * roundSMBTo) / roundSMBTo
+                    }
+                    consoleError.add("UAM High Boost enacted; SMB equals $boostInsulinReq; Original insulin requirement was $insulinReq")
                 }
-
+                // ----- Tier 5: Percent scale (BG 110-180, delta > 3, accelerating) -----
+                // Lower bound raised from 98 to 110: data shows 57% hypo rate when T5 fires at BG 90-110.
+                // Layer B: !mlTierDowngrade gate added. Layer C: !g3HoldActive gate added.
+                // v4.4.4 Fix A v2: !inPostRescueWindow guard added.
+                else if (!mlTierDowngrade && !g3HoldActive && !inPostRescueWindow && bg > 110 && bg < 181 && glucose_status.delta > 3 && delta_accl > 0 && eventualBG > target_bg && iob_data.iob < boostMaxIOB && boostActive) {
+                    consoleError.add(">>> TIER 5: Percent Scale <<<")
+                    rT.boostTier = "PERCENT_SCALE"
+                    if (insulinReq > boostMaxIOB - iob_data.iob) {
+                        insulinReq = boostMaxIOB - iob_data.iob
+                    }
+                    if (insulinReq < 0) {
+                        insulinDivisor = insulinReqPCT - ((abs(bg - 180) / 72) * (insulinReqPCT - (2 * scale_pct)))
+                        insulinReq = boostInsulinReq
+                        consoleError.add("Increased SMB as insulin required < 0")
+                    }
+                    microBolus = Math.floor(min(insulinReq / insulinDivisor, boost_max) * roundSMBTo) / roundSMBTo
+                    // Apply graduated fast-carb scaling
+                    if (fastCarbRebound) {
+                        val preFcSmb = microBolus
+                        microBolus = Math.floor(microBolus * fastCarbScale * roundSMBTo) / roundSMBTo
+                        consoleError.add("Fast-carb scale applied: $preFcSmb → $microBolus (${round(fastCarbScale * 100, 0)}%)")
+                        fastCarbScaleApplied = true
+                    }
+                    rT.reason.append("Increased SMB as percentage of insulin required to ${(1.0 / insulinDivisor) * 100}%. SMB is $microBolus; ")
+                    iTimeActive = true
+                    consoleError.add("Post percent scale trigger state: $iTimeActive")
+                }
+                // ----- Tier 6: Acceleration bolus (delta_accl > 25) -----
+                // Layer B: !mlTierDowngrade gate added. Layer C: !g3HoldActive gate added.
+                else if (!mlTierDowngrade && !g3HoldActive && delta_accl > 25 && glucose_status.delta > 4 && bg > 110 && iob_data.iob < boostMaxIOB && boostActive && eventualBG > target_bg) {
+                    consoleError.add(">>> TIER 6: Acceleration Bolus <<<")
+                    rT.boostTier = "ACCELERATION"
+                    boostInsulinReq = min(boost_scale * boostInsulinReq, boost_max)
+                    if (boostInsulinReq > boostMaxIOB - iob_data.iob) {
+                        boostInsulinReq = boostMaxIOB - iob_data.iob
+                    }
+                    insulinDivisor = insulinReqPCT - boostPercentScaleReduction(bg, insulinReqPCT - (2 * scale_pct))
+                    insulinReqPCT = insulinDivisor
+                    microBolus = Math.floor(min(boostInsulinReq / insulinReqPCT, boost_max) * roundSMBTo) / roundSMBTo
+                    // Apply graduated fast-carb scaling
+                    if (fastCarbRebound) {
+                        val preFcSmb = microBolus
+                        microBolus = Math.floor(microBolus * fastCarbScale * roundSMBTo) / roundSMBTo
+                        consoleError.add("Fast-carb scale applied: $preFcSmb → $microBolus (${round(fastCarbScale * 100, 0)}%)")
+                        fastCarbScaleApplied = true
+                    }
+                    iTimeActive = true
+                    consoleError.add("Acceleration bolus triggered; SMB equals $boostInsulinReq")
+                    rT.reason.append("Acceleration bolus triggered; SMB equals $boostInsulinReq; ")
+                }
                 // ----- Tier 7: Enhanced oref1 (mild acceleration) -----
-                if (!g3HoldActive && boostActive && glucose_status.delta > 0 && delta_accl >= 0.5) {
+                // Layer C: !g3HoldActive gate added. (T7 is not gated by mlTierDowngrade —
+                // T7/T8 are the conservative tiers that mlTierDowngrade falls through TO.)
+                else if (!g3HoldActive && boostActive && glucose_status.delta > 0 && delta_accl >= 0.5) {
                     consoleError.add(">>> TIER 7: Enhanced oref1 <<<")
                     rT.boostTier = "ENHANCED_OREF1"
                     if (insulinReq > boostMaxIOB - iob_data.iob) {
@@ -1568,26 +1714,21 @@ class DetermineBasalBoost @Inject constructor(
                     microBolus = Math.floor(min(insulinReq / insulinReqPCT, boost_max) * roundSMBTo) / roundSMBTo
                     rT.reason.append("Enhanced oref1 triggered; SMB equals $microBolus; ")
                 }
-                // ----- Tier 8: Regular oref1 -----
+                // ----- Tier 8: Regular oref1 (default fallback) -----
+                // Layer C: gated by !g3HoldActive. When G3 hold is active, fall through
+                // to the G3-hold branch below (microBolus = 0, tier = NONE).
                 else if (!g3HoldActive) {
-                    consoleError.add(">>> TIER 8: Regular oref1 <<<")
-                    rT.boostTier = "REGULAR_OREF1"
+                    consoleError.add(">>> TIER 8: Regular oref1 (fallback) <<<")
+                    rT.boostTier = TIER_REGULAR_OREF1
                     microBolus = Math.floor(min(insulinReq / insulinReqPCT, maxBolus) * roundSMBTo) / roundSMBTo
                     rT.reason.append("Regular oref1 triggered; SMB equals $microBolus; ")
                 }
-                // ----- G3 hold: no SMB this cycle. -----
+                // ----- G3 hold: T5/T6/T7/T8 all suppressed; no SMB this cycle. -----
                 else {
                     rT.boostTier = "NONE"
                     microBolus = 0.0
-                    rT.reason.append("G3 pre-UAM uncertainty hold: SMB suppressed; ")
-                    consoleError.add(">>> G3 HOLD: SMB suppressed <<<")
-                }
-                // The fast-carb scale applied on the cycles Tiers 3, 5 and 6 used to size, and still does.
-                if (fastCarbRebound && (boostTrigger == "UAM_BOOST" || boostTrigger == "PERCENT_SCALE" || boostTrigger == "ACCELERATION")) {
-                    val preFcSmb = microBolus
-                    microBolus = Math.floor(microBolus * fastCarbScale * roundSMBTo) / roundSMBTo
-                    consoleError.add("Fast-carb scale applied: $preFcSmb → $microBolus (${round(fastCarbScale * 100, 0)}%)")
-                    fastCarbScaleApplied = true
+                    rT.reason.append("G3 pre-UAM uncertainty hold: T5/6/7/8 suppressed; ")
+                    consoleError.add(">>> G3 HOLD: SMB suppressed (T5/6/7/8 gated by uncertainty hold) <<<")
                 }
 
                 // =====================================================================
@@ -1595,7 +1736,7 @@ class DetermineBasalBoost @Inject constructor(
                 // during a confirmed spike, allow SMB to rise toward boost_max.
                 // Conditions: BG > 180, still rising (delta > 5), insulinReq is at least
                 // 3× the basal-derived cap, and boost is active. This only affects Tier 8
-                // (capped by maxBolus); Tier 7 already caps to boost_max.
+                // (the only tier capped by maxBolus); Tiers 1-7 already cap to boost_max.
                 // Never in the post-rescue window or under the ML tier downgrade (audit
                 // item 20); see boostSpikeOverrideAllowed.
                 // =====================================================================

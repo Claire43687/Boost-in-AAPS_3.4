@@ -161,6 +161,9 @@ open class OpenAPSBoostPlugin @Inject constructor(
     // asset is handled inside the model classes (returns null score).
     private val boostRiskModel: BoostRiskModel,
     private val boostMealModel: BoostMealModel,
+    // Four-column hypo shadow: glucose plus the three trend averages the engine
+    // already publishes. READ-ONLY, doses nothing. Stateless, so nothing to warm up.
+    private val hypoFourColumnShadow: HypoFourColumnShadow,
     private val profiler: Profiler,
     private val apsResultProvider: () -> APSResult,
     // V5 silent shadow — V1 hands the cycle's RT + inputs to V5 after determine_basal
@@ -217,13 +220,15 @@ open class OpenAPSBoostPlugin @Inject constructor(
     private suspend fun vwaShadowCycle(tdd7DKnown: Double?): BoostVwaTddShadow.Result? {
         val tdd7D = tdd7DKnown ?: tddCalculator.averageTDD(tddCalculator.calculate(7, allowMissingDays = true))?.data?.totalAmount
         val now = System.currentTimeMillis()
-        val sinceAnchorH = ((now - vwaTddShadow.dayAnchorMs(now)) / 3_600_000L).coerceIn(0L, 24L)
-        val deliveredToday = if (sinceAnchorH > 0L) tddCalculator.calculateDaily(-sinceAnchorH, 0L)?.totalAmount else 0.0
+        // From the anchor itself, not a whole number of hours back from now, which dropped up to an
+        // hour from the start of the day.
+        val anchorMs = vwaTddShadow.dayAnchorMs(now)
+        val deliveredToday = tddCalculator.calculateInterval(anchorMs, now, allowMissingData = true)?.totalAmount
         // Read one day of stored history per cycle until the curve stands on the participant rather
         // than on the population. Costs 48 window totals on a cycle and stops after seven days.
         // The shadow takes a plain callback; TddCalculator is suspend in AAPS 4.0.
-        vwaTddShadow.warmFromHistory(now) { startH, endH ->
-            runBlocking { tddCalculator.calculateDaily(startH, endH) }?.totalAmount
+        vwaTddShadow.warmFromHistory(now) { startMs, endMs ->
+            runBlocking { tddCalculator.calculateInterval(startMs, endMs, allowMissingData = true) }?.totalAmount
         }
         return vwaTddShadow.compute(nowMs = now, deliveredSinceDayStart = deliveredToday, tdd7D = tdd7D)
     }
@@ -647,6 +652,8 @@ open class OpenAPSBoostPlugin @Inject constructor(
     private val boostMaxIob; get() = preferences.getBoostDosing(DoubleKey.ApsBoostMaxIob)
     private val boostInsulinReqPct; get() = preferences.getBoostDosing(DoubleKey.ApsBoostInsulinReqPct)
     private val boostScale; get() = preferences.getBoostDosing(DoubleKey.ApsBoostScale)
+    private val boostPercentScale; get() = preferences.getBoostDosing(DoubleKey.ApsBoostPercentScale)
+    private val enableBoostPercentScale; get() = preferences.getBoostDosing(BooleanKey.ApsBoostEnablePercentScale)
     private val enableCircadianIsf; get() = preferences.getBoostDosing(BooleanKey.ApsBoostEnableCircadianIsf)
     private val allowBoostWithHighTt; get() = preferences.getBoostDosing(BooleanKey.ApsBoostAllowWithHighTt)
 
@@ -972,7 +979,12 @@ open class OpenAPSBoostPlugin @Inject constructor(
         val stepsFeed: String = "none",
         // The configured night window as a clock fact this cycle (read whatever the night-mode toggle
         // says). The pre-meal target and the meal-time learner key on it.
-        val inNightWindow: Boolean = false
+        val inNightWindow: Boolean = false,
+        // The heart-rate classification before an unusable reading is discarded, and the resting rate
+        // it used, so the APS page can say why heart rate did or did not count this cycle.
+        val hr: HrActivityCalculator.HrClassificationResult? = null,
+        val hrRestingBpm: Int? = null,
+        val hrRestingLearned: Boolean = false
     )
 
     private suspend fun calculateBoostActivity(
@@ -1115,7 +1127,8 @@ open class OpenAPSBoostPlugin @Inject constructor(
         }
 
         // ---- HR-augmented classification (opt-in, additive only) ----
-        val hrClassification: HrActivityCalculator.HrClassificationResult? =
+        val hrRestingUsed = hrLearnedDaytimeBpmCached ?: hrRestingBpm
+        val hrRaw: HrActivityCalculator.HrClassificationResult? =
             if (hrIntegrationEnabled) {
                 val windowMs = hrWindowMinutes * 60_000L
                 val hrReadings = persistenceLayer.getHeartRatesFromTime(now - windowMs)
@@ -1126,12 +1139,13 @@ open class OpenAPSBoostPlugin @Inject constructor(
                     hrMax = hrMaxBpm,
                     // Use learned daytime baseline if banked (≥7 nights); fallback to configured.
                     // This gives a more accurate Karvonen HRR for exercise classification.
-                    hrResting = hrLearnedDaytimeBpmCached ?: hrRestingBpm,
+                    hrResting = hrRestingUsed,
                     stepsLast15Min = recentSteps15Min,
                     stressDetection = hrStressDetection,
                     aapsLogger = aapsLogger,
-                ).takeIf { it.hrZone != HrActivityCalculator.HrZone.NONE } // null if no HR data
+                )
             } else null
+        val hrClassification = hrRaw?.takeIf { it.hrZone != HrActivityCalculator.HrZone.NONE } // null if no HR data
 
         // Exercise and HR classification run whatever the Boost gate says. They lower the
         // profile or raise the target, so an exercise session inside the night window keeps its
@@ -1189,7 +1203,10 @@ open class OpenAPSBoostPlugin @Inject constructor(
             debugReason = debug.toString(),
             sleepInActive = sleepInActive,
             stepsFeed = stepFeed.label,
-            inNightWindow = inNightWindow
+            inNightWindow = inNightWindow,
+            hr = hrRaw,
+            hrRestingBpm = hrRestingUsed,
+            hrRestingLearned = hrLearnedDaytimeBpmCached != null
         )
     }
 
@@ -1272,7 +1289,7 @@ open class OpenAPSBoostPlugin @Inject constructor(
     }
 
     /**
-     * The Boost dosing engine. Computes the base decision (oref sizing, basal, predictions and the
+     * The Boost dosing engine. Computes the base decision (tier sizing, basal, predictions and the
      * safety gates), then lets V6's observe-confirm-commit decision replace the SMB at the seam below.
      */
     suspend fun runEngine(initiator: String, tempBasalFallback: Boolean) {
@@ -1546,17 +1563,18 @@ open class OpenAPSBoostPlugin @Inject constructor(
         val recentSteps30Min = StepService.getRecentStepCount30Min()
         val recentSteps60Min = StepService.getRecentStepCount60Min()
 
-        // 7b. V6 anticipatory pre-meal low target (shadow-first).
-        // Learned habitual meal times (from V5 CONFIRMED commits) lower the target ~45-60 min
+        // 7b. V6 anticipatory pre-meal low target.
+        // Learned habitual meal times (from V5 CONFIRMED commits) lower the target 45 to 60 min
         // before a meal so insulinReq is already elevated when carbs land. Exercise and
-        // post-exercise recovery OVERRIDE this (activity raises the target; we only fire when not
-        // active and not recovering). LOWER-ONLY: never raises a target. Shadow gate — when
-        // ApsBoostV6PreMealTarget is OFF we only log "WOULD apply" for NS validation, no change.
+        // post-exercise recovery override this (activity raises the target; it fires only when not
+        // active and not recovering). Lower-only: never raises a target. With
+        // ApsBoostV6PreMealTarget off nothing is computed and nothing is logged.
         var v6MinBg = activityResult.minBg
         var v6MaxBg = activityResult.maxBg
         var v6TargetBg = activityResult.targetBg
         var v6PreMealReason: String? = null
         run {
+            if (!preferences.getBoostDosing(BooleanKey.ApsBoostV6PreMealTarget)) return@run
             val nowLocal = java.time.LocalTime.now()
             val nowMin = nowLocal.hour * 60 + nowLocal.minute
             val offsetMs = java.time.ZoneId.systemDefault().rules.getOffset(java.time.Instant.now()).totalSeconds * 1000L
@@ -1593,17 +1611,13 @@ open class OpenAPSBoostPlugin @Inject constructor(
             }
             val preMealTarget = preferences.getBoostDosing(DoubleKey.ApsBoostV6PreMealTargetMgdl)
             val mealClock = formatClockMin(hit.mode.centreMin)
-            v6PreMealReason = if (preferences.getBoostDosing(BooleanKey.ApsBoostV6PreMealTarget)) {
-                if (preMealTarget < v6TargetBg) {   // lower-only
-                    v6MinBg = minOf(v6MinBg, preMealTarget)
-                    v6MaxBg = minOf(v6MaxBg, preMealTarget)
-                    v6TargetBg = preMealTarget
-                    "V6 pre-meal ACTIVE target=${preMealTarget.toInt()} (learned ~$mealClock, ${hit.minutesBeforeMeal}min before, ${hit.mode.distinctDays}d); "
-                } else {
-                    "V6 pre-meal skipped (target ${preMealTarget.toInt()} ≥ current ${v6TargetBg.toInt()}); "
-                }
+            v6PreMealReason = if (preMealTarget < v6TargetBg) {   // lower-only
+                v6MinBg = minOf(v6MinBg, preMealTarget)
+                v6MaxBg = minOf(v6MaxBg, preMealTarget)
+                v6TargetBg = preMealTarget
+                "V6 pre-meal ACTIVE target=${preMealTarget.toInt()} (learned ~$mealClock, ${hit.minutesBeforeMeal}min before, ${hit.mode.distinctDays}d); "
             } else {
-                "V6 pre-meal WOULD apply ${preMealTarget.toInt()} (learned ~$mealClock, ${hit.minutesBeforeMeal}min before, ${hit.mode.distinctDays}d); "
+                "V6 pre-meal skipped (target ${preMealTarget.toInt()} ≥ current ${v6TargetBg.toInt()}); "
             }
         }
 
@@ -1646,8 +1660,8 @@ open class OpenAPSBoostPlugin @Inject constructor(
             allowSMB_with_high_temptarget = smbEnabled && preferences.get(BooleanKey.ApsUseSmbWithHighTt),
             enableSMB_always = smbEnabled && preferences.get(BooleanKey.ApsUseSmbAlways) && advancedFiltering,
             enableSMB_after_carbs = smbEnabled && preferences.get(BooleanKey.ApsUseSmbAfterCarbs) && advancedFiltering,
-            maxSMBBasalMinutes = preferences.get(IntKey.ApsMaxMinutesOfBasalToLimitSmb),
-            maxUAMSMBBasalMinutes = preferences.get(IntKey.ApsUamMaxMinutesOfBasalToLimitSmb),
+            maxSMBBasalMinutes = preferences.getBoostDosing(IntKey.ApsMaxMinutesOfBasalToLimitSmb),
+            maxUAMSMBBasalMinutes = preferences.getBoostDosing(IntKey.ApsUamMaxMinutesOfBasalToLimitSmb),
             bolus_increment = pump.pumpDescription.bolusStep,
             carbsReqThreshold = preferences.get(IntKey.ApsCarbsRequestThreshold),
             current_basal = currentBasal,
@@ -1681,6 +1695,8 @@ open class OpenAPSBoostPlugin @Inject constructor(
                 aapsLogger.debug(LTag.APS, "Boost post-exercise recovery [$lastExerciseStateAtTransition]: boost_scale $boostScale → $scaled (scale=$activeRecoveryScale)")
                 scaled
             } else boostScale,
+            boost_percent_scale = boostPercentScale,
+            enableBoostPercentScale = enableBoostPercentScale,
             enableCircadianISF = enableCircadianIsf,
             allowBoost_with_high_temptarget = allowBoostWithHighTt,
 
@@ -1697,6 +1713,18 @@ open class OpenAPSBoostPlugin @Inject constructor(
             // Debug context
             boostDebugReason = activityResult.debugReason,
             isfDebugReason = isfResult.isfDebug,
+            hr_integration = hrIntegrationEnabled,
+            hr_summary = activityResult.hr?.debugInfo.orEmpty(),
+            hr_avg_bpm = activityResult.hr?.averageHrBpm,
+            hr_reserve_pct = activityResult.hr?.hrrPercent,
+            hr_zone = activityResult.hr?.hrZone?.label.orEmpty(),
+            hr_state = activityResult.hr?.takeIf { it.hrZone != HrActivityCalculator.HrZone.NONE }?.exerciseState?.name.orEmpty(),
+            hr_confidence = activityResult.hr?.takeIf { it.hrZone != HrActivityCalculator.HrZone.NONE }?.confidence?.name.orEmpty(),
+            hr_resting_bpm = activityResult.hrRestingBpm.takeIf { hrIntegrationEnabled },
+            hr_resting_learned = activityResult.hrRestingLearned,
+            hr_max_bpm = hrMaxBpm.takeIf { hrIntegrationEnabled },
+            hr_window_min = hrWindowMinutes.takeIf { hrIntegrationEnabled },
+            activity_state = activityResult.activityState,
 
             // V5/V6 exercise inputs (F2) — fill so OpenAPSBoostV5Plugin's decide() sees
             // the live activity state. These fields were DEAD on the live path since the V6 plugin
@@ -1854,6 +1882,40 @@ open class OpenAPSBoostPlugin @Inject constructor(
                 aapsLogger.error(LTag.APS, "V5 shadow invocation failed", t)
                 null
             }
+            // Four-column hypo shadow. Scores both hypo labels from glucose and the
+            // three trend averages the engine already publishes, so it needs no new input and no
+            // state. READ-ONLY: logs hypo4=, delivers nothing.
+            //
+            // Trained on the Loop observational study and deliberately NOT on this cohort, so every
+            // current user is out-of-sample and these live scores are a held-out test rather than a
+            // re-reading of the fit that motivated them. Held out here: 0.8176 sustained against
+            // 0.7485 for reading the current glucose, 0.9184 near against 0.8718, each better for
+            // 36 of 36 participants. Against the deployed mlHypoRisk on the cycles where it runs,
+            // the fit led by 0.068 on the sustained label (95% CI 0.032 to 0.118).
+            //
+            // Rides in the reason string, never an RT field: RT is built inside determine_basal in
+            // every engine here and one property costs one register in each, which the legacy
+            // V3MLG3 engine has no room for (see the RT KDoc). Belt-and-braces runCatching on top
+            // of the shadow's own null-returns, so it can never break a cycle.
+            runCatching {
+                val h4 = hypoFourColumnShadow.evaluate(
+                    glucose = glucoseStatus.glucose,
+                    delta = glucoseStatus.delta,
+                    shortAvgDelta = glucoseStatus.shortAvgDelta,
+                    longAvgDelta = glucoseStatus.longAvgDelta,
+                )
+                if (h4 != null) {
+                    // sustained carries the deployed mlHypoRisk's own label (below 70 for at least
+                    // 15 min, beginning within 90), so the two are directly comparable on the same
+                    // row. near is below 70 touched within 45 min, a shorter question that would
+                    // need its own place in the dose path.
+                    it.reason.append(
+                        "hypo4=${Round.roundTo(h4.sustained, 0.0001)},${Round.roundTo(h4.near, 0.0001)}; "
+                    )
+                } else {
+                    it.reason.append("hypo4skip=${hypoFourColumnShadow.lastSkip}; ")
+                }
+            }.onFailure { t -> aapsLogger.error(LTag.APS, "Four-column hypo shadow failed (swallowed, dosing untouched)", t) }
             // Acceleration-based early-meal-detection SHADOW. Signal digging over all Boost
             // data found BG ACCELERATION (curvature) is the one signal worth adding: it detects an
             // unannounced meal ~5 min before the delta-based confirm (and improves the forecaster). accel =
@@ -1899,8 +1961,8 @@ open class OpenAPSBoostPlugin @Inject constructor(
             if (microBolusAllowed && v5decision != null && !v5Asleep && !cumulativeCapReached && !v1LowSuspend && activityResult.boostActive) {
                 val v1WouldDose = it.units ?: 0.0
                 // Non-meal-state cap: V6 may only OUT-dose V1 when it holds a meal
-                // hypothesis (CONFIRMED/COMMITTED). In IDLE/OBSERVING/RECOVERING the V5 state caps
-                // don't apply (applyStateDoseCap passes them through) and IDLE's 1.0× multiplier can
+                // hypothesis (CONFIRMED/COMMITTED). In IDLE and OBSERVING
+                // applyStateDoseCap sets no cap (RECOVERING has the committed cap there), and IDLE's 1.0× multiplier can
                 // front a multi-unit correction that bypasses V1's per-SMB sizing — Capping at V1's would-dose makes IDLE match
                 // its own spec ("standard oref dose; no meal hypothesis"); genuine meal rises still
                 // get full V6 dosing via OBSERVING→CONFIRMED.
@@ -2088,6 +2150,8 @@ open class OpenAPSBoostPlugin @Inject constructor(
                 confirmTranche.reset()
             }
 
+
+
             // V6: surface the anticipatory pre-meal target decision computed earlier this cycle.
             v6PreMealReason?.let { r -> it.reason.append(r) }
             // V6 meal-time learner: record a FRESH CONFIRMED commit (the event V5 treats as a meal)
@@ -2124,6 +2188,7 @@ open class OpenAPSBoostPlugin @Inject constructor(
                 val ev = sleepEvalCached ?: throw IllegalStateException("sleep evaluation did not run this cycle")
                 val sleepResult = ev.result
                 val agg = ev.agg
+                val livePrevSleep = ev.livePrev
                 val sleepInputs = ev.inputs
                 val hrReadingsForSleep = ev.hrReadings
 
@@ -2204,6 +2269,22 @@ open class OpenAPSBoostPlugin @Inject constructor(
                 // from NS: step growth over the last hour on the watch and phone series, the 15-min
                 // steps it saw, the HR-above-floor streak, minutes into a wake candidacy, lie-in.
                 it.reason.append(sleepDbgTag(sleepResult, sleepInputs))
+                // Shadow only: the pre-window hold candidate. Reason tag only; see
+                // preWindowSleepShadowTag for what it does not touch.
+                it.reason.append(preWindowSleepShadowTag(livePrevSleep, sleepInputs))
+                // Shadow only. The learned WAKE is filtered to genuine wakes; the
+                // learned ONSET counts every session start, so a spurious mid-night wake splits a
+                // night in two and the second start is learned as a bedtime. These are the same
+                // mean computed two corrected ways, logged beside the shipped value so the
+                // difference can be priced on real nights. Neither is consumed by anything: the
+                // effective night window above still uses agg.sleepStartMinAvg.
+                if (agg.sleepStartMinFirstOfNight != null || agg.sleepStartMinGapMerged != null) {
+                    it.reason.append(
+                        "sleepalt=" +
+                            (agg.sleepStartMinFirstOfNight?.let { m -> formatClockMin(m) } ?: "-") + "," +
+                            (agg.sleepStartMinGapMerged?.let { m -> formatClockMin(m) } ?: "-") + "; "
+                    )
+                }
             } catch (t: Throwable) {
                 aapsLogger.error(LTag.APS, "Sleep state evaluation failed", t)
             }
@@ -2347,18 +2428,7 @@ open class OpenAPSBoostPlugin @Inject constructor(
                 }
             }
 
-            // ── Autosens / TDD-DynISF coordination telemetry. Always logs which
-            // mechanism drives basal + the would-be alternative, so ApsBoostAutosensWhenNoTdd can be
-            // validated on real data before being enabled. SHADOW only when the toggle is OFF — the
-            // applied ratio (boostAutosens_appliedRatio) is whatever determine_basal actually used. ──
             it.boostVersion = BoostBuildInfo.BOOST_VERSION
-            it.boostAutosens_mode = if (useTdd) "tdd" else if (autosensWhenNoTdd) "autosens" else "curve"
-            it.boostAutosens_orefRatio = Round.roundTo(orefAutosensRatio, 0.001)
-            it.boostAutosens_curveRatio = Round.roundTo(isfResult.ratio, 0.001)
-            it.boostAutosens_appliedRatio = Round.roundTo(autosensResult.ratio, 0.001)
-            if (!useTdd) {
-                it.reason.append("autosensCoord[${it.boostAutosens_mode}]: oref=${Round.roundTo(orefAutosensRatio, 0.01)} curve=${Round.roundTo(isfResult.ratio, 0.01)} applied=${Round.roundTo(autosensResult.ratio, 0.01)}; ")
-            }
 
             val determineBasalResult = apsResultProvider().with(it)
             determineBasalResult.inputConstraints = inputConstraints
@@ -2442,10 +2512,24 @@ open class OpenAPSBoostPlugin @Inject constructor(
         SleepStateDetector.State.deserialize(preferences.getBoostDosing(StringKey.ApsBoostSleepState))
     @Volatile private var sleepHistoryCached: SleepHistoryTracker.History =
         SleepHistoryTracker.History.deserialize(preferences.getBoostDosing(StringKey.ApsBoostSleepHistory))
+    // SHADOW ONLY: the pre-window hold candidate's own state. Null until first run or
+    // when nothing is persisted, in which case it is seeded from the live state.
+    @Volatile private var sleepPreWindowShadowCached: SleepStateDetector.State? =
+        SleepStateDetector.State.deserializeOrNull(preferences.getBoostDosing(StringKey.ApsBoostSleepPreWindowShadow))
+
+    /**
+     * Advances the pre-window hold shadow one cycle and returns its reason tag, or "" if it fails.
+     * The shadow reads the live state only as a seed (a deep copy) and writes only its own cached
+     * state and its own preference key, persisted on its own transitions. Nothing reads either:
+     * isInNightSleepPeriod, the Boost gate, V6's asleep flag, night mode, the lie-in failsafe and
+     * the sleep-history learner all read sleepStateCached. Kept out of invoke() so a fault here is
+     * caught on its own and cannot cut short the telemetry that follows.
+     */
     /** One cycle's sleep evaluation, kept for the end-of-cycle telemetry. */
     private class SleepEval(
         val result: SleepStateDetector.Result,
         val agg: SleepHistoryTracker.Aggregate,
+        val livePrev: SleepStateDetector.State,
         val inputs: SleepStateDetector.Inputs,
         val hrReadings: List<HR>
     )
@@ -2454,7 +2538,7 @@ open class OpenAPSBoostPlugin @Inject constructor(
     // When the detector last confirmed a wake on steps or HR + steps. In memory only: after a restart
     // the lie-in failsafe applies again until steps clear it, the conservative direction.
     @Volatile private var lastGenuineWakeMs: Long = 0L
-    private val GENUINE_STEP_WAKES = setOf("steps", "hr_steps")
+    private val GENUINE_STEP_WAKES = setOf("steps", "hr_steps", "pw_steps", "pw_hr_steps")
     // mlMealLikely from the previous cycle: the sleep evaluation now runs before this cycle's is
     // computed. It gates sleep ENTRY only (< 0.30), so a five-minute-old value is enough.
     @Volatile private var lastMlMealLikely: Double? = null
@@ -2501,6 +2585,8 @@ open class OpenAPSBoostPlugin @Inject constructor(
             val watchStepsToday = WearStepSource.stepsToday(scTodayForSleep, sleepDayStartMs, now)
             // Without the Health Connect top-up, which lands as one jump.
             val phoneStepsToday = StepService.getOwnStepsToday(localOffsetMs)
+            // Live state before this cycle, kept for the pre-window shadow's seed.
+            val livePrevSleep = sleepStateCached
             val sleepInputs = SleepStateDetector.Inputs(
                 nowMs = now,
                 minuteOfDay = minOfDay,
@@ -2524,7 +2610,7 @@ open class OpenAPSBoostPlugin @Inject constructor(
                 stepsTodayPhone = phoneStepsToday
             )
             val sleepResult = SleepStateDetector.evaluate(
-                prev = sleepStateCached,
+                prev = livePrevSleep,
                 inputs = sleepInputs,
                 aapsLogger = aapsLogger
             )
@@ -2574,7 +2660,7 @@ open class OpenAPSBoostPlugin @Inject constructor(
                     preferences.put(StringKey.ApsBoostSleepHistory, sleepHistoryCached.serialize())
                 }
             }
-            SleepEval(sleepResult, agg, sleepInputs, hrReadingsForSleep)
+            SleepEval(sleepResult, agg, livePrevSleep, sleepInputs, hrReadingsForSleep)
         } catch (t: Throwable) {
             aapsLogger.error(LTag.APS, "Sleep state evaluation failed", t)
             null
@@ -2594,6 +2680,18 @@ open class OpenAPSBoostPlugin @Inject constructor(
         val cand = r.newState.wakeCandidateSinceMs?.let { s -> ((inputs.nowMs - s) / 60_000L).toString() } ?: "-"
         return "sleepDbg=${r.stepsLbWatch},${r.stepsLbPhone},${inputs.stepsLast15Min},${r.newState.hrHighStreak},$cand,${if (r.inLieIn) 1 else 0}; "
     }
+
+    private fun preWindowSleepShadowTag(livePrev: SleepStateDetector.State, inputs: SleepStateDetector.Inputs): String =
+        try {
+            val r = SleepStateDetector.advancePreWindowShadow(sleepPreWindowShadowCached, livePrev, inputs)
+            val seeded = sleepPreWindowShadowCached == null
+            sleepPreWindowShadowCached = r.newState
+            if (r.transitioned || seeded) preferences.put(StringKey.ApsBoostSleepPreWindowShadow, r.newState.serialize())
+            SleepStateDetector.preWindowShadowTag(r)
+        } catch (t: Throwable) {
+            aapsLogger.error(LTag.APS, "Sleep pre-window shadow failed", t)
+            ""
+        }
     // V6 meal-time learner — rolling 60-day history of V5-CONFIRMED meal commits. Loaded once at
     // construction; updated at end of invoke() when a fresh CONFIRMED fires, persisted on change.
     @Volatile private var mealTimeHistoryCached: MealTimeLearner.History =
@@ -2719,8 +2817,7 @@ open class OpenAPSBoostPlugin @Inject constructor(
         key = "openapsboost_settings",
         title = ApsStrings.openaps_boost,
         items = listOf<PreferenceItem>(
-            // V1-only SMB sizing — these size V1's own SMB tiers, which "Boost V5" replaces, so they
-            // are NOT shown on the V5 screen.
+            // Not reachable: the engine is not a selectable plugin. V6's Advanced screen carries these keys.
             PreferenceSubScreenDef(
                 key = "boost_v1_smb_sizing",
                 title = ApsStrings.boost_v1_smb_sizing_title,
@@ -2752,9 +2849,6 @@ open class OpenAPSBoostPlugin @Inject constructor(
                 items = buildList {
                     if (includeEngineEssentials) add(DoubleKey.ApsMaxBasal)
                     add(DoubleKey.ApsSmbMaxIob)
-                    // Sizes the oref tiers, which also bound V6 outside a meal.
-                    add(DoubleKey.ApsBoostInsulinReqPct)
-                    add(DoubleKey.ApsBoostScale)
                     add(BooleanKey.ApsUseAutosens)
                     add(BooleanKey.ApsAutoIsfHighTtRaisesSens)
                     add(BooleanKey.ApsAutoIsfLowTtLowersSens)
@@ -2765,7 +2859,7 @@ open class OpenAPSBoostPlugin @Inject constructor(
         // ── 2. Shared Boost engine controls (live under V5 too) ─────
         // maxIOB clamps V5's dose; circadian ISF + allow-with-high-TT shape sens/insulinReq
         // which V5 inherits as baseInsulinReq. The V1 SMB-SIZING controls (bolus cap, scale,
-        // percent-scale, boost time window) are NOT here — V5 replaces V1's SMB, so
+        // percent-scale, insulinReq%, boost time window) are NOT here — V5 replaces V1's SMB, so
         // they're inert under V5; they live in V1's screen only. EXCEPTION: the cumulative-60min
         // SMB cap ALSO bounds V5/V6 (re-checked at the V6 override), so it lives in the shared
         // Safety category below — see §6.

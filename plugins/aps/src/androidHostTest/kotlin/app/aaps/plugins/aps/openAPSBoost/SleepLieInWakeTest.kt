@@ -117,6 +117,26 @@ class SleepLieInWakeTest {
         assertThat(woke).isNull()
     }
 
+    @Test fun `steps alone wake before the night end with live HR below the floor - the 2026-11-04 case`() {
+        // 07:40 to 08:10, before the 08:12 night end. Up and walking, but HR 70 never clears the 78.75 floor.
+        val day = listOf(
+            Triple(66.0, 13, 13), Triple(70.0, 13, 13), Triple(70.0, 221, 180), Triple(70.0, 312, 250),
+            Triple(70.0, 328, 300), Triple(70.0, 371, 330), Triple(70.0, 426, 380)
+        )
+        val (woke, reason) = run(460, day, sleepInSteps = 250, steps15 = listOf(0, 0, 208, 300, 303, 129, 106))
+        assertThat(woke).isNotNull()
+        assertThat(woke!!).isLessThan(NIGHT_END)
+        assertThat(reason).isEqualTo("steps")
+    }
+
+    @Test fun `core night with live HR - steps above the strong threshold still do not wake`() {
+        // 03:00 is more than 90 min before the night end, so steps alone wait for HR.
+        // 300 in the last 15 min as well, so only the clock keeps the new route off.
+        val night = List(8) { k -> Triple(70.0, 100 * k, 0) }
+        val (woke, _) = run(180, night, sleepInSteps = 250, steps15 = List(8) { 300 })
+        assertThat(woke).isNull()
+    }
+
     @Test fun `phone step series survives serialisation and old state without it still loads`() {
         val s = asleep(T0)
         s.phoneStepSamples.add(SleepStateDetector.StepSample(T0, 42))

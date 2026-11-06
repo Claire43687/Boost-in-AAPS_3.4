@@ -236,6 +236,17 @@ object SleepStateDetector {
                     State()
                 }
             }
+
+            /** As [deserialize], but null when [raw] is blank or not JSON, so a caller can seed instead. */
+            fun deserializeOrNull(raw: String): State? {
+                if (raw.isBlank()) return null
+                return try {
+                    JSONObject(raw)
+                    deserialize(raw)
+                } catch (e: Exception) {
+                    null
+                }
+            }
         }
     }
 
@@ -330,7 +341,50 @@ object SleepStateDetector {
      * Evaluate the state machine for the current cycle. Pure function over [prev] and [inputs].
      * Caller persists [Result.newState] and passes it as [prev] next cycle.
      */
-    fun evaluate(prev: State, inputs: Inputs, aapsLogger: AAPSLogger? = null): Result {
+    fun evaluate(prev: State, inputs: Inputs, aapsLogger: AAPSLogger? = null): Result =
+        // The pre-window hold is live, so the shadow below now
+        // computes the same state; it is kept so the sleepPw= tag stays in the reason string.
+        evaluateRule(prev, inputs, aapsLogger, preWindowHold = true)
+
+    /**
+     * Was a shadow before the hold went live; [evaluate] now uses the same rule, so this
+     * returns the live result. The candidate rule for the pre-window boundary fault, advanced on its
+     * own [State] beside the live one and consumed by nothing except a reason-string tag.
+     *
+     * Live candidacy may start [SLEEP_SCHEDULE_TOLERANCE_MIN] before nightStart, but the SLEEPING
+     * branch holds only from nightStart, so a SLEEPING state entered in that pre-window is ended on
+     * the next cycle by the boundary rule (1.0 to 1.9 such exits per night for most users). The candidate holds SLEEPING from
+     * the candidacy start instead. Inside the pre-window it adds two wake routes, because while HR
+     * is live and the clock is far from the scheduled wake none of the live routes can fire there:
+     * steps since the SLEEPING entry at or above the strong-steps threshold (the user's sleep-in
+     * steps), or HR above the wake floor for the sustain count together with step evidence since the
+     * entry. Steps are counted from the entry rather than over the full 60-min lookback, so the walk
+     * to bed cannot end the sleep it preceded. Both pass through the usual wake hysteresis and wake
+     * with reason "pw_steps" or "pw_hr_steps". Outside the pre-window the rule is the live rule.
+     */
+    fun evaluatePreWindowShadow(prev: State, inputs: Inputs): Result =
+        evaluateRule(prev, inputs, null, preWindowHold = true)
+
+    /**
+     * One shadow cycle. [shadowPrev] null (first run, or nothing persisted) seeds the shadow from a
+     * deep copy of the live state as it stood before this cycle, so the two start together and the
+     * live state is never shared or mutated.
+     */
+    fun advancePreWindowShadow(shadowPrev: State?, livePrev: State, inputs: Inputs): Result {
+        val seed = shadowPrev ?: livePrev.copy(stepSamples = livePrev.stepSamples.toMutableList())
+        return evaluatePreWindowShadow(seed, inputs)
+    }
+
+    /**
+     * Reason-string tag for the shadow, written every cycle: `sleepPw=<STATE>; `, or
+     * `sleepPw=AWAKE,<wakeReason>; ` on the cycle the shadow leaves SLEEPING. Every cycle rather than
+     * only on disagreement, so a missing tag means the shadow did not run and a disagreement can be
+     * read against `sleep=` without inferring the shadow's state from silence.
+     */
+    fun preWindowShadowTag(shadow: Result): String =
+        "sleepPw=${shadow.newState.state}" + (shadow.wakeReason?.let { ",$it" } ?: "") + "; "
+
+    private fun evaluateRule(prev: State, inputs: Inputs, aapsLogger: AAPSLogger?, preWindowHold: Boolean): Result {
         val debug = StringBuilder()
         val avgHr = averageHr(inputs.hrReadings, inputs.nowMs, inputs.hrWindowMinutes)
         val sleepCap = inputs.hrResting * 1.15
@@ -352,11 +406,12 @@ object SleepStateDetector {
         // (never START a new sleep during the morning lie-in).
         val lieInEnd = if (inputs.sleepInWindowMin > 0)
             (inputs.nightEndMin + inputs.sleepInWindowMin) % 1440 else inputs.nightEndMin
-        // The hold starts where candidacy starts. Candidacy may start SLEEP_SCHEDULE_TOLERANCE_MIN before
-        // nightStart; with the hold beginning at nightStart, a SLEEPING state entered in that pre-window ended
-        // on the next cycle as "boundary" and was re-entered about ten minutes later, until nightStart.
-        val inHoldWindow = minuteInWrappedRange(inputs.minuteOfDay, sleepCandStart, lieInEnd)
-        val inPreWindow = minuteInWrappedRange(inputs.minuteOfDay, sleepCandStart, inputs.nightStartMin)
+        // The hold starts at the candidacy start. preWindowHold is true on the live call;
+        // false gives the old [nightStart, lieInEnd) hold.
+        val holdStart = if (preWindowHold) sleepCandStart else inputs.nightStartMin
+        val inHoldWindow = minuteInWrappedRange(inputs.minuteOfDay, holdStart, lieInEnd)
+        val inPreWindow = preWindowHold &&
+            minuteInWrappedRange(inputs.minuteOfDay, sleepCandStart, inputs.nightStartMin)
         val inLieIn = inputs.sleepInWindowMin > 0 &&
             minuteInWrappedRange(inputs.minuteOfDay, inputs.nightEndMin, lieInEnd)
 
@@ -576,8 +631,9 @@ object SleepStateDetector {
                     //    off). It fires EITHER when HR can't corroborate (drought established — dead/
                     //    intermittent, any time in the night) OR anywhere in the lie-in past nightEnd
                     //    (the merged sleep-in release: past the alarm, movement means up regardless of HR).
-                    //    When HR is live and it is still the core night, the gentle rule governs and
-                    //    steps-alone does NOT wake (preserves the both-required guard).
+                    //    It also fires within SLEEP_SCHEDULE_TOLERANCE_MIN of nightEnd with recent steps. When HR
+                    //    is live and it is still the core night, the gentle rule governs and steps-alone does
+                    //    NOT wake.
                     val stepsConfirmWake = inputs.stepsLast15Min >= 100 || stepsInLookback >= WAKE_STEP_THRESHOLD
                     val hrAboveWakeFloor = avgHr != null && avgHr > wakeFloor &&
                         newState.hrHighStreak >= wakeHrSustainCycles(inputs.cycleSpacingMinutes)
@@ -585,7 +641,10 @@ object SleepStateDetector {
                     // configured or learned, and a detected wake must end it; before this the HR rule
                     // stopped at the (learned) scheduled wake and only steps-alone could end a lie-in.
                     val gentleWake = stepsConfirmWake && hrAboveWakeFloor && (nearScheduledWake || inLieIn)
-                    val strongStepsWake = stepsInLookback >= strongStepsThreshold && (droughtEstablished || inLieIn)
+                    // Also in the 90 min before nightEnd: the HR streak often fails while someone is up and walking.
+                    // There it needs 100 steps in the last 15 min, so a batched upload of older steps does not wake.
+                    val strongStepsWake = stepsInLookback >= strongStepsThreshold && (droughtEstablished || inLieIn ||
+                        (nearScheduledWake && inputs.stepsLast15Min >= WAKE_STEP_THRESHOLD))
                     // Pre-window wake routes. With HR live and the clock far from the scheduled wake none of the
                     // routes above can fire there, so a sleep held from the pre-window could not end before the
                     // night. Steps count from the SLEEPING entry, not the 60-min lookback, so the walk to bed
@@ -607,7 +666,7 @@ object SleepStateDetector {
                                 newState = State(state = SleepState.AWAKE, enteredAtMs = inputs.nowMs,
                                                  lastFreshHrSampleMs = newState.lastFreshHrSampleMs)
                                 transitioned = true
-                                wakeReason = when {       // hr_steps and steps are genuine wakes; pw_* do not train the learned wake
+                                wakeReason = when {                                     // all genuine wakes
                                     gentleWake -> "hr_steps"
                                     strongStepsWake -> "steps"
                                     preWindowHrWake -> "pw_hr_steps"

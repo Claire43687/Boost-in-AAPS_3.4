@@ -68,6 +68,8 @@ data class OapsProfileBoost(
     var boost_maxIOB: Double,                   // Boost-specific IOB limit
     var Boost_InsulinReq: Double,               // Insulin required divisor percentage (e.g. 50 = give 50%)
     var boost_scale: Double,                    // Multiplier for boost insulin requirement
+    var boost_percent_scale: Double,            // Sliding scale percentage factor (e.g. 200)
+    var enableBoostPercentScale: Boolean,       // Enable sliding scale from BG 108→180
     var enableCircadianISF: Boolean,            // Enable time-of-day ISF adjustment
     var allowBoost_with_high_temptarget: Boolean, // Allow boost even with high temp target
 
@@ -97,6 +99,21 @@ data class OapsProfileBoost(
     // Boost debug context (not used by algorithm, displayed in Script Debug)
     var boostDebugReason: String = "",
     var isfDebugReason: String = "",
+
+    // Heart rate as the activity classifier read it this cycle, for the Heart rate section of the APS
+    // page. Not used by the algorithm. Null bpm values mean no usable reading (none, or a frozen trace).
+    var hr_integration: Boolean = false,
+    var hr_summary: String = "",
+    var hr_avg_bpm: Double? = null,
+    var hr_reserve_pct: Double? = null,
+    var hr_zone: String = "",
+    var hr_state: String = "",
+    var hr_confidence: String = "",
+    var hr_resting_bpm: Int? = null,
+    var hr_resting_learned: Boolean = false,
+    var hr_max_bpm: Int? = null,
+    var hr_window_min: Int? = null,
+    var activity_state: String = "",
 
     // V5-shadow inputs (filled by V3MLG3/V4.4.1 plugin so the V5 shadow plugin can mirror
     // V4.4.1's activity state without duplicating HrActivityCalculator/post-exercise state).

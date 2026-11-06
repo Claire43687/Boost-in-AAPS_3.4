@@ -6,7 +6,6 @@ import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.plugins.aps.getBoostDosing
 import org.json.JSONObject
 import java.util.Locale
-import kotlin.math.round
 
 /**
  * V5 persisted-state store.
@@ -20,8 +19,7 @@ import kotlin.math.round
  * atomically — partial updates would let mealHypothesis advance while age stays stale, which
  * would silently break hysteresis. JSON in one key keeps writes atomic.
  *
- * RT NS fields are written separately (to ProcessedDeviceStatusData via the existing pipeline)
- * for observability — see [v5DecisionToRtJson].
+ * RT NS fields are written separately, through the existing device-status pipeline.
  *
  * ## Fix 6 — in-memory cache for atomic persistence across rapid invokes
  *
@@ -156,26 +154,7 @@ class V5StateStore(private val preferences: Preferences, private val aapsLogger:
     }
 }
 
-/**
- * Names of the core NS RT fields emitted via [v5DecisionToRtJson]. The plugin additionally sets
- * `boostV5_finalDose`, `boostV5_active`, `boostV5_committedCap`, `boostV5_confirmedCap`, and (from
- * ) `boostV5_confirmGate`, `boostV5_prospectiveShot`, `boostV5_aggressionKnob` directly
- * on RT (see OpenAPSBoostV5Plugin.runShadow) — 13 fields total . These core six
- * plus per-cycle inputs reconstruct any V5 decision (per `boost_v5_test_plan.md`).
- */
-object V5RTFields {
-    const val MEAL_SIGNAL_SCORE = "boostV5_score"
-    const val MEAL_HYPOTHESIS = "boostV5_state"
-    const val MEAL_HYPOTHESIS_AGE = "boostV5_age"
-    const val AGGRESSION_BUDGET = "boostV5_budget"
-    const val ACTION_MULTIPLIER = "boostV5_actionMult"
-    const val GATE_REDUCTION = "boostV5_gateReduction"   // comma-joined gate tags (not a percentage)
-}
-
-/**
- * THE single formatter for the compact gate-reduction summary. Used by the rT field, the plugin's
- * log line, and [v5DecisionToRtJson] — one implementation so the three can never diverge.
- */
+/** The single formatter for the compact gate-reduction summary written to the rT field. */
 fun formatGateReduction(r: GateReductions): String = listOfNotNull(
     r.iobHeadroomBrake.takeIf { it < 1.0 }?.let { "iobHeadroom:${formatScale(it)}" },
     r.postActionRiskCheck.takeIf { it < 1.0 }?.let { "postAction:${formatScale(it)}" },
@@ -185,22 +164,6 @@ fun formatGateReduction(r: GateReductions): String = listOfNotNull(
     if (r.maxIobClampApplied) "maxIOB" else null,
     if (r.dynamicSpikeCapped) "spike" else null,
 ).joinToString(",").ifEmpty { "none" }
-
-/** Build a JSON blob suitable for embedding in NS deviceStatus from a [V5Decision]. */
-fun v5DecisionToRtJson(decision: V5Decision): JSONObject {
-    val gateReduction = formatGateReduction(decision.phase3.reductions)
-
-    return JSONObject()
-        .put(V5RTFields.MEAL_SIGNAL_SCORE, round4(decision.score))
-        .put(V5RTFields.MEAL_HYPOTHESIS, decision.mealHypothesis.name)
-        .put(V5RTFields.MEAL_HYPOTHESIS_AGE, decision.mealHypothesisAge)
-        .put(V5RTFields.AGGRESSION_BUDGET, round4(decision.aggressionBudget.budget))
-        .put(V5RTFields.ACTION_MULTIPLIER, round4(decision.actionMultiplier))
-        .put(V5RTFields.GATE_REDUCTION, gateReduction)
-}
-
-/** Numeric rounding to 4 decimals — locale-independent (don't use String.format default locale). */
-private fun round4(v: Double): Double = round(v * 10000.0) / 10000.0
 
 /** Compact 2-decimal scale formatter — locale-pinned to US so a comma-decimal device doesn't break parsing. */
 private fun formatScale(v: Double): String = String.format(Locale.US, "%.2f", v)

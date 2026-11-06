@@ -28,6 +28,7 @@ class BoostV1SafetyEngineTest {
         bg: Double,
         maxIob: Double = 10.0,
         insulinReqPercent: Double = 85.0,
+        percentScale: Double = 250.0,
         recentLowBG: Double = 999.0,
         boostBolus: Double = 3.0,
         boostMaxIob: Double = 10.0,
@@ -49,8 +50,8 @@ class BoostV1SafetyEngineTest {
         dynISFBgCap = 210.0, dynISFBgCapped = bg, sensNormalTarget = 50.0, normalTarget = 99.0, dynISFvelocity = 1.0,
         insulinPeak = 75,
         boostActive = true, profileSwitch = 100, boost_bolus = boostBolus, boost_maxIOB = boostMaxIob,
-        Boost_InsulinReq = insulinReqPercent, boost_scale = boostScale,
-        enableCircadianISF = false, allowBoost_with_high_temptarget = false,
+        Boost_InsulinReq = insulinReqPercent, boost_scale = boostScale, boost_percent_scale = percentScale,
+        enableBoostPercentScale = true, enableCircadianISF = false, allowBoost_with_high_temptarget = false,
         recentSteps5Minutes = 0, recentSteps15Minutes = 0, recentSteps30Minutes = 0, recentSteps60Minutes = 0,
         recentLowBG = recentLowBG, recentBrakingProduct = 0.0, dynIsfMode = true,
     )
@@ -90,48 +91,26 @@ class BoostV1SafetyEngineTest {
     private fun RT.describe() =
         "tier=$boostTier units=$units insulinReq=$insulinReq\nREASON: $reason\nCONSOLE:\n${consoleError?.joinToString("\n")}"
 
-    // Single plugin. A cycle that meets Tier 3's conditions at 270 mg/dL no longer gets a Tier 3
-    // dose: the SMB is sized by Enhanced oref1, insulinReq x 0.85 up to the bolus cap (10 U here so that the
-    // cap does not hide the size), and Tier 3's conditions only switch on the Boost high temp, as before.
-    @Test fun `a tier 3 cycle is sized by enhanced oref and still gets the high temp`() {
+    // Item 4. Tier 3 at 270 mg/dL with insulinReq% 85 and percent scale 250: the old divisor was
+    // 1.176 - (90/72)(1.176 - 0.4) = 0.206, multiplying insulinReq by 4.9, up to the bolus cap (10 U here so
+    // that the cap does not hide the difference). The divisor is now 1.176, so the dose is insulinReq x 0.85.
+    @Test fun `tier 3 above 180 doses insulinReq at the insulinReq percent, not multiplied by a shrinking divisor`() {
         val bg = 270.0
         val rt = run(profile(bg, boostBolus = 10.0), bg = bg, delta = 12.0, shortAvg = 8.0, longAvg = 4.0, iobNow = 0.5)
-        assertWithMessage(rt.describe()).that(rt.boostTier).isEqualTo("ENHANCED_OREF1")
-        assertWithMessage(rt.describe()).that(rt.reason.toString()).contains("boostTrigger=UAM_BOOST")
-        assertWithMessage(rt.describe()).that(rt.reason.toString()).contains("Additional basal trigger currently set to true")
+        assertWithMessage(rt.describe()).that(rt.boostTier).isEqualTo("UAM_BOOST")
         val req = rt.insulinReq!!
         assertWithMessage(rt.describe()).that(req).isGreaterThan(0.0)
         val expected = Math.floor(minOf(req / (100.0 / 85.0), 10.0) * 20) / 20
         assertWithMessage(rt.describe()).that(rt.units ?: 0.0).isWithin(1e-9).of(expected)
     }
 
-    // The high temp stays as it was: Tier 5's conditions (110 to 180 mg/dL, rising and accelerating) switch it on,
-    // and the SMB is oref-sized. Glucose 150 rising 4 per 5 min against a short average of 3 meets Tier 5 and
-    // not Tier 3 (delta below 5) or the G3 hold (delta below 5).
-    @Test fun `a tier 5 cycle still gets the high temp`() {
-        val bg = 150.0
-        val rt = run(profile(bg), bg = bg, delta = 4.0, shortAvg = 3.0, longAvg = 2.0, iobNow = 0.2)
-        assertWithMessage(rt.describe()).that(rt.reason.toString()).contains("boostTrigger=PERCENT_SCALE")
-        assertWithMessage(rt.describe()).that(rt.reason.toString()).contains("Additional basal trigger currently set to true")
-        assertWithMessage(rt.describe()).that(rt.boostTier).isAnyOf("ENHANCED_OREF1", "REGULAR_OREF1")
-    }
-
-    // Tier 4 never switched the high temp on and still does not. Glucose 200 rising 9 per 5 min with a steady
-    // short average meets Tier 4 (delta above 8 above 180) but not Tier 3 (delta / short average is 1.0).
-    @Test fun `a tier 4 cycle gets no high temp`() {
-        val bg = 200.0
-        val rt = run(profile(bg), bg = bg, delta = 9.0, shortAvg = 9.0, longAvg = 6.0, iobNow = 0.2)
-        assertWithMessage(rt.describe()).that(rt.reason.toString()).contains("boostTrigger=UAM_HIGH_BOOST")
-        assertWithMessage(rt.describe()).that(rt.reason.toString()).contains("Additional basal trigger currently set to false")
-    }
-
-    // Item 5. IOB 1.0 and max_iob 1.5 leave 0.5 U of headroom. Tier 3's old basal-derived dose (1.0 U) was
-    // clamped only against boost_maxIOB, so it took IOB to 2.0 although oref's own insulinReq was 0.1 U. The
-    // cycle is now oref-sized, and the final clamp still holds it inside max_iob.
+    // Item 5. IOB 1.0 and max_iob 1.5 leave 0.5 U of headroom. Tier 3 at 105 mg/dL gives the basal-derived
+    // Boost dose (boost_scale 1 x basal 1 U/h = 1.0 U), which is clamped only against boost_maxIOB (10), so
+    // V1 gave 1.0 U and took IOB to 2.0 although oref's own insulinReq was 0.1 U. It now gives at most 0.5 U.
     @Test fun `final SMB never takes IOB above max_iob`() {
         val bg = 105.0
         val rt = run(profile(bg, maxIob = 1.5), bg = bg, delta = 9.0, shortAvg = 6.0, longAvg = 3.0, iobNow = 1.0)
-        assertWithMessage(rt.describe()).that(rt.reason.toString()).contains("boostTrigger=UAM_BOOST")
+        assertWithMessage(rt.describe()).that(rt.boostTier).isEqualTo("UAM_BOOST")
         assertWithMessage(rt.describe()).that(rt.units ?: 0.0).isAtMost(0.5 + 1e-9)
         assertWithMessage(rt.describe()).that(rt.units ?: 0.0).isGreaterThan(0.0)
     }

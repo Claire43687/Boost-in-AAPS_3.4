@@ -292,6 +292,7 @@ enum class BooleanKey(
     SiteRotationManageCgm("site_rotation_manage_cgm", defaultValue = false, title = KeysStrings.pref_title_site_rotation_manage_cgm, sync = SyncSpec(SyncChannel.Cold, SyncDirection.Bidirectional)),
 
     // Boost
+    ApsBoostEnablePercentScale("enableBoostPercentScale", true, KeysStrings.pref_title_boost_enable_percent_scale, summary = KeysStrings.pref_summary_boost_enable_percent_scale, defaultedBySM = true),
     ApsBoostEnableCircadianIsf("enableCircadianISF", false, KeysStrings.pref_title_boost_enable_circadian_isf, summary = KeysStrings.pref_summary_boost_enable_circadian_isf, defaultedBySM = true),
     ApsBoostAllowWithHighTt("enableBoost_with_high_temptarget", false, KeysStrings.pref_title_boost_allow_with_high_tt, summary = KeysStrings.pref_summary_boost_allow_with_high_tt, defaultedBySM = true),
     ApsBoostUseTdd("boost_use_tdd", false, KeysStrings.pref_title_boost_use_tdd, summary = KeysStrings.pref_summary_boost_use_tdd, defaultedBySM = true),

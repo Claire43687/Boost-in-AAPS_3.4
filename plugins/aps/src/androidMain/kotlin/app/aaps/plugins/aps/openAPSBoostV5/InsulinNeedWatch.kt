@@ -12,9 +12,12 @@ import kotlin.math.sqrt
  * food the loop is not told about absorbs any change in how well insulin works, so the notification
  * describes the change in dose and glucose and leaves the cause to the person.
  *
- * Measured offline over 45 users and 562 user-months: 0.23 alerts a user-month; in the week after an upward alert insulin ran a median
- * 14.6% above the month (10.1 to 18.9) against 0.5% after random days, about a third of the alert's
- * own change.
+ * Measured offline over 45 users and 518 person-months, and 802 people and 6,862 person-months of the
+ * JAEB Loop study, against sustained shifts of 15% or more. In the JAEB data it caught 63% of upward
+ * shifts (60 to 65) and 41% of downward (38 to 44) at a median 9 days after the shift's start, and 54%
+ * of upward notices fell within a shift against 13% of random days. The window and threshold were chosen
+ * from a grid, which is why they were rerun on shifts of 10% and 20%. A notice's change was about half
+ * still there the following week (42% to 53% across data sets and directions).
  *
  * Days are TddCalculator's: 24 hours from each local midnight, so they include profile basal (on a
  * clock-change day the hour lost or repeated is about 4% of a day, well inside the band). A day under
@@ -25,10 +28,10 @@ import kotlin.math.sqrt
  */
 object InsulinNeedWatch {
 
-    const val WINDOW_DAYS = 3
+    const val WINDOW_DAYS = 5
     const val BASELINE_DAYS = 30
     const val MIN_BASELINE_DAYS = 20
-    const val K_SD = 2.0
+    const val K_SD = 1.5
     const val GAP_FRACTION = 0.25
     const val PROFILE_CHANGE = 0.15
     const val COOLDOWN_DAYS = 14L

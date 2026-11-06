@@ -30,6 +30,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
+import kotlin.math.roundToInt
 
 @Immutable
 data class OpenAPSUiState(
@@ -120,6 +121,11 @@ class OpenAPSViewModel(
                 )
             }
 
+            // Heart rate (Boost): before, only one line of it was shown, inside Script debug
+            lastAPSResult.oapsProfileBoost?.let { bp ->
+                add(OpenAPSSection(title = ApsStrings.hr_section_label, rows = bp.heartRateRows()))
+            }
+
             // Current Temp
             lastAPSResult.currentTemp?.let { ct ->
                 add(
@@ -192,6 +198,21 @@ class OpenAPSViewModel(
 
             // Raw Result (RT)
             val rawData = lastAPSResult.rawData()
+
+            // Auto config: Boost appends its autocfg=, autordv= and histsync= breadcrumbs to every reason
+            if (rawData is RT) {
+                val autoConfigRows = autoConfigRows(rawData.reason.toString())
+                if (autoConfigRows.isNotEmpty()) {
+                    add(
+                        OpenAPSSection(
+                            title = ApsStrings.openapsma_autoconfig_label,
+                            rows = autoConfigRows,
+                            collapsedByDefault = true
+                        )
+                    )
+                }
+            }
+
             if (rawData is RT) {
                 add(
                     OpenAPSSection(
@@ -229,6 +250,63 @@ class OpenAPSViewModel(
     }
 
     // --- Mapping functions ---
+
+    /**
+     * One full-width line naming each breadcrumb, then a row per comma-separated item, named in words.
+     * A value such as tr=KEPT_USER_TUNED/d=0.35/op=0.65 becomes a row with the outcome and one indented
+     * row per part. A code with no description is shown as written, so a new breadcrumb field still appears.
+     */
+    private fun autoConfigRows(reason: String): List<KeyValueRow> = buildList {
+        for (crumb in AUTO_CONFIG_BREADCRUMB.findAll(reason)) {
+            val name = crumb.groupValues[1]
+            add(KeyValueRow("", AUTO_CONFIG_CRUMB_LABELS[name]?.let { rh.gs(it) } ?: name))
+            for (item in crumb.groupValues[2].split(',').map { it.trim() }.filter { it.isNotEmpty() }) {
+                if (item.startsWith('@')) {
+                    add(KeyValueRow(rh.gs(ApsStrings.autoconfig_at), isoToLocal(item.substring(1))))
+                    continue
+                }
+                val cut = item.indexOf('=').takeIf { it > 0 } ?: item.indexOf(':').takeIf { it > 0 }
+                if (cut == null) {
+                    add(KeyValueRow(itemLabel(item), ""))
+                    continue
+                }
+                val code = item.substring(0, cut)
+                var value = item.substring(cut + 1)
+                // keptUser=1@<ISO time>: the time of the set-up run rides on the last count
+                val at = value.substringAfter('@', "").takeIf { it.isNotEmpty() }
+                if (at != null) value = value.substringBefore('@')
+                val parts = value.split('/')
+                add(KeyValueRow(itemLabel(code), words(parts.first()).replace("|", ", ")))
+                for (part in parts.drop(1)) {
+                    val eq = part.indexOf('=')
+                    if (eq > 0) {
+                        val letter = part.substring(0, eq)
+                        val label = AUTO_CONFIG_PART_LABELS[code]?.get(letter)?.let { rh.gs(it) } ?: letter
+                        add(KeyValueRow("   $label", words(part.substring(eq + 1))))
+                    } else {
+                        // kept:user-set or held:<why>, the reason the knob was left where it is
+                        add(KeyValueRow("   " + rh.gs(ApsStrings.autoconfig_reason), part.replace(':', ' ').replace('-', ' ')))
+                    }
+                }
+                if (at != null) add(KeyValueRow(rh.gs(ApsStrings.autoconfig_at), isoToLocal(at)))
+            }
+        }
+    }
+
+    /** held-CommittedCapU, kept-PrimerCapU and retired-X carry the setting's name after the prefix. */
+    private fun itemLabel(code: String): String {
+        AUTO_CONFIG_ITEM_LABELS[code]?.let { return rh.gs(it) }
+        for ((prefix, ref) in AUTO_CONFIG_PREFIX_LABELS)
+            if (code.startsWith(prefix)) return rh.gs(ref, code.removePrefix(prefix))
+        return code
+    }
+
+    private fun isoToLocal(iso: String): String =
+        runCatching { dateUtil.dateAndTimeString(dateUtil.fromISODateString(iso)) }.getOrNull() ?: iso
+
+    /** KEPT_USER_TUNED reads as "kept user tuned"; numbers and true/false pass through. */
+    private fun words(code: String): String =
+        if (OUTCOME_CODE.matches(code)) code.lowercase().replace('_', ' ') else code
 
     private fun GlucoseStatus.toRows(): List<KeyValueRow> = listOf(
         KeyValueRow("glucose", glucose.toString()),
@@ -304,8 +382,32 @@ class OpenAPSViewModel(
 
     // OapsProfileBoost has some 75 fields and gains more with each Boost release, so its rows come
     // from its serializer, in declaration order, rather than a hand-kept list that would fall behind.
+    private fun OapsProfileBoost.heartRateRows(): List<KeyValueRow> = buildList {
+        if (!hr_integration) {
+            add(KeyValueRow("", rh.gs(ApsStrings.hr_integration_off)))
+        } else {
+            val avg = hr_avg_bpm
+            if (avg == null) {
+                add(KeyValueRow("", rh.gs(ApsStrings.hr_no_reading, hr_window_min ?: 0)))
+            } else {
+                add(KeyValueRow(rh.gs(ApsStrings.hr_average, hr_window_min ?: 0), rh.gs(ApsStrings.hr_bpm, avg.roundToInt())))
+                hr_reserve_pct?.let { add(KeyValueRow(rh.gs(ApsStrings.hr_reserve), rh.gs(CoreUiStrings.units_format_percent, it.roundToInt()))) }
+                add(KeyValueRow(rh.gs(ApsStrings.hr_zone), hr_zone))
+                if (hr_state.isNotEmpty())
+                    add(KeyValueRow(rh.gs(ApsStrings.hr_classified), rh.gs(ApsStrings.hr_state_confidence, words(hr_state), words(hr_confidence))))
+            }
+            hr_resting_bpm?.let {
+                add(KeyValueRow(rh.gs(if (hr_resting_learned) ApsStrings.hr_resting_learned else ApsStrings.hr_resting_setting), rh.gs(ApsStrings.hr_bpm, it)))
+            }
+            hr_max_bpm?.let { add(KeyValueRow(rh.gs(ApsStrings.hr_max), rh.gs(ApsStrings.hr_bpm, it))) }
+        }
+        if (activity_state.isNotEmpty()) add(KeyValueRow(rh.gs(ApsStrings.hr_activity_state), activity_state))
+        if (hr_summary.isNotEmpty()) add(KeyValueRow(rh.gs(ApsStrings.hr_details), hr_summary))
+    }
+
     private fun OapsProfileBoost.toRows(): List<KeyValueRow> =
         rowsJson.encodeToJsonElement(OapsProfileBoost.serializer(), this).jsonObject
+            .filterKeys { !it.startsWith("hr_") } // shown in the Heart rate section
             .filterValues { it !is JsonNull }
             .map { (key, value) -> KeyValueRow(key, (value as? JsonPrimitive)?.content ?: value.toString()) }
 
@@ -421,3 +523,56 @@ class OpenAPSViewModel(
 
 // encodeDefaults so the fields with defaults (dynIsfMode, the debug reasons, the V5 inputs) are listed too.
 private val rowsJson = Json { encodeDefaults = true }
+
+private val AUTO_CONFIG_BREADCRUMB = Regex("""\b(autocfg|autordv|histsync)=([^;]*)""")
+
+private val OUTCOME_CODE = Regex("[A-Z][A-Z_]+")
+
+private val AUTO_CONFIG_CRUMB_LABELS = mapOf(
+    "autocfg" to ApsStrings.autoconfig_crumb_setup,
+    "autordv" to ApsStrings.autoconfig_crumb_redrive,
+    "histsync" to ApsStrings.autoconfig_crumb_histsync
+)
+
+private val AUTO_CONFIG_ITEM_LABELS = mapOf(
+    "applied" to ApsStrings.autoconfig_applied,
+    "heldTBR" to ApsStrings.autoconfig_held_tbr,
+    "keptUser" to ApsStrings.autoconfig_kept_user,
+    "held" to ApsStrings.autoconfig_held,
+    "tr" to ApsStrings.autoconfig_tr,
+    "ndw" to ApsStrings.autoconfig_ndw,
+    "win" to ApsStrings.autoconfig_win,
+    "ev" to ApsStrings.autoconfig_ev,
+    "ch" to ApsStrings.autoconfig_ch,
+    "skip" to ApsStrings.autoconfig_skip,
+    "pr" to ApsStrings.autoconfig_pr,
+    "aec" to ApsStrings.autoconfig_aec,
+    "fcc" to ApsStrings.autoconfig_fcc
+)
+
+private val AUTO_CONFIG_PREFIX_LABELS = listOf(
+    "held-" to ApsStrings.autoconfig_prefix_held,
+    "kept-" to ApsStrings.autoconfig_prefix_kept,
+    "retired-" to ApsStrings.autoconfig_prefix_retired
+)
+
+private val SWITCH_PARTS = mapOf("v" to ApsStrings.autoconfig_part_switch_value, "ok" to ApsStrings.autoconfig_part_switch_ok)
+
+/** The letters inside a slash-separated value, by the item they belong to. */
+private val AUTO_CONFIG_PART_LABELS = mapOf(
+    "tr" to mapOf(
+        "d" to ApsStrings.autoconfig_part_tr_d,
+        "op" to ApsStrings.autoconfig_part_tr_op,
+        "s" to ApsStrings.autoconfig_part_tr_s,
+        "l" to ApsStrings.autoconfig_part_tr_l,
+        "J" to ApsStrings.autoconfig_part_tr_j
+    ),
+    "ndw" to mapOf(
+        "z" to ApsStrings.autoconfig_part_ndw_z,
+        "p" to ApsStrings.autoconfig_part_ndw_p,
+        "n" to ApsStrings.autoconfig_part_ndw_n
+    ),
+    "pr" to mapOf("tb" to ApsStrings.autoconfig_part_pr_tb, "wc" to ApsStrings.autoconfig_part_pr_wc),
+    "aec" to SWITCH_PARTS,
+    "fcc" to SWITCH_PARTS
+)

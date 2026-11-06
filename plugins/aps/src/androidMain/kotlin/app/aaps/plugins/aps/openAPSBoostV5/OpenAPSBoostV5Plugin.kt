@@ -35,6 +35,7 @@ import app.aaps.core.interfaces.utils.MidnightTime
 import app.aaps.core.keys.BooleanComposedKey
 import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.DoubleKey
+import app.aaps.core.keys.IntKey
 import app.aaps.core.keys.IntNonKey
 import app.aaps.core.keys.LongNonKey
 import app.aaps.core.keys.StringKey
@@ -179,7 +180,7 @@ open class OpenAPSBoostV5Plugin @Inject constructor(
 
     /**
      * "Boost" is the one selectable Boost plugin. It runs the Boost engine, which makes the base
-     * decision (oref sizing, basal, predictions and the safety gates) and calls [runShadow] for the
+     * decision (tier sizing, basal, predictions and the safety gates) and calls [runShadow] for the
      * V6 observe-confirm-commit decision that replaces the SMB, then exposes the engine's result as
      * its own. This plugin owns no basal or prediction logic: it delegates to
      * [OpenAPSBoostPlugin.runEngine].
@@ -196,9 +197,33 @@ open class OpenAPSBoostV5Plugin @Inject constructor(
         // (A coroutine Mutex in AAPS 4.0, because the engine run is a suspend call.)
         withContext(Dispatchers.Default) {
             configLock.withLock {
+                // Before the engine, so a lowered value sizes this cycle's microbolus. Two preference
+                // reads a cycle, so it does not wait for the weekly re-derivation.
+                runCatching { enforceSmbMinutesCeiling() }
+                    .onFailure { aapsLogger.error(LTag.APS, "BoostV5 SMB basal-minutes ceiling failed (non-fatal)", it) }
                 openAPSBoostEngine.value.runEngine(initiator, tempBasalFallback)
             }
         }
+    }
+
+    /** See [BoostV5AutoConfigApply.smbBasalMinutesCeilings]. Writes, logs and notifies only when it lowers a value. */
+    private fun enforceSmbMinutesCeiling() {
+        // Unmasked: these keys are defaultedBySM and 4.0 defaults them to 30, so a masked read in Simple Mode
+        // would report 30 on every cycle, write again and post another notice.
+        val ceilings = BoostV5AutoConfigApply.smbBasalMinutesCeilings
+        val lowered = BoostV5AutoConfigApply.capSmbBasalMinutes({ preferences.getBoostDosing(it) }, { key, value -> preferences.put(key, value) })
+        if (lowered.isEmpty()) return
+        val changes = lowered.map { (key, old) -> Triple(key, old, ceilings.getValue(key)) }
+        replaceBreadcrumbToken(SMBMIN_TOKEN, "smbmin=" + changes.joinToString("/") { (key, old, new) -> "${key.key}:$old>$new" })
+        aapsLogger.info(LTag.APS, "BoostV5 auto-config: SMB basal-minutes lowered $changes")
+        notificationManager.post(
+            NotificationId.BOOST_MESSAGE,
+            "Boost V6 lowered the largest microbolus to Boost's limits: " +
+                changes.joinToString("; ") { (key, old, new) ->
+                    (if (key == IntKey.ApsUamMaxMinutesOfBasalToLimitSmb) "UAM" else "standard") + " $old to $new minutes of basal"
+                } + ".",
+            level = NotificationLevel.INFO
+        )
     }
 
     /** Serialises auto-config writes against an engine run. Held briefly at each end. */
@@ -325,9 +350,9 @@ open class OpenAPSBoostV5Plugin @Inject constructor(
     }
 
     /**
-     * The insulin-need watch ([InsulinNeedWatch]): the last three complete days' total daily dose
+     * The insulin-need watch ([InsulinNeedWatch]): the last five complete days' total daily dose
      * against the month before, reported in the auto-config breadcrumb every day and as a
-     * notification when it lies outside two standard deviations. It changes no setting.
+     * notification when it lies more than 1.5 standard deviations out. It changes no setting.
      */
     private suspend fun checkInsulinNeed(now: Long) {
         val dayMs = 24L * 60 * 60 * 1000
@@ -372,13 +397,13 @@ open class OpenAPSBoostV5Plugin @Inject constructor(
         val body = buildString {
             append("Your insulin has averaged %.1f U a day over the last ${InsulinNeedWatch.WINDOW_DAYS} days, ".format(java.util.Locale.ROOT, r.recentMeanU))
             append("against %.1f U over the ${r.baselineDays} days before (".format(java.util.Locale.ROOT, r.baselineMeanU))
-            append("%+.0f%%, beyond twice the usual day-to-day spread of %.1f U).".format(java.util.Locale.ROOT, r.percent, r.baselineSdU))
+            append("%+.0f%%, beyond %.1f times the usual day-to-day spread of %.1f U).".format(java.util.Locale.ROOT, r.percent, InsulinNeedWatch.K_SD, r.baselineSdU))
             if (!recentBg.isNaN() && !baseBg.isNaN()) append(" Glucose averaged ${bg(recentBg)} against ${bg(baseBg)}.")
             append(
                 if (above) " This can mean your insulin needs have risen; eating, activity, illness or an infusion site can do the same."
                 else " This can mean your insulin needs have fallen; eating, activity or a gap in the pump record can do the same."
             )
-            append(" In past records, about a third of a change this size was still there a week later. No setting has been changed.")
+            append(" In past records, about half of a change this size was still there a week later. No setting has been changed.")
         }
         notificationManager.post(NotificationId.BOOST_NEED_WATCH, body, level = NotificationLevel.INFO)
     }
@@ -1014,8 +1039,7 @@ open class OpenAPSBoostV5Plugin @Inject constructor(
      *  - Its own meal_signal_score, MealHypothesis transition, AggressionBudget, action
      *    multiplier, Phase 3 gates via [determineBasalBoostV5.decide].
      *
-     * Output: V5 RT JSON logged via aapsLogger at INFO with prefix "BoostV5_RT:" and the
-     * boostV5_* RT fields for NS — comparing V5 decisions against V1's delivery.
+     * Output: the boostV5_* RT fields for NS, comparing V5 decisions against V1's delivery.
      *
      * Safety: any exception is caught and logged; V5 never propagates an error to the engine
      * (the engine falls back to its own dose).
@@ -1079,8 +1103,6 @@ open class OpenAPSBoostV5Plugin @Inject constructor(
             // announced-meal telemetry, in the reason string rather than an RT field.
             if (inputs.mealAnnounced) rT.reason.append("mealAnn=1,${if (decision.mealSessionStarted) "commit" else "-"}; ")
 
-            val rtJson = v5DecisionToRtJson(decision)
-            aapsLogger.info(LTag.APS, "BoostV5_RT: ${rtJson} actual_smb=${rT.units ?: 0.0} actual_insulinReq=${rT.insulinReq ?: 0.0} activeMode=$activeMode")
             decision
         } catch (e: Throwable) {
             // Never let V5 break V4.4.1. Log and continue. Null → caller leaves V1's dose intact.
@@ -1115,8 +1137,7 @@ open class OpenAPSBoostV5Plugin @Inject constructor(
         return mins.minOrNull()
     }
 
-    /** Delegates to the single shared formatter (V5StateStore.kt) — the same string goes to the
-     *  rT field, the log line, and v5DecisionToRtJson, so the three can never diverge. */
+    /** Delegates to the single shared formatter in V5StateStore.kt. */
     private fun formatGateReduction(decision: V5Decision): String = formatGateReduction(decision.phase3.reductions)
 
     private suspend fun buildInputs(
@@ -1404,7 +1425,18 @@ open class OpenAPSBoostV5Plugin @Inject constructor(
                     DoubleKey.ApsBoostV5TrancheThreshold,
                     BooleanKey.ApsBoostV6PreMealTarget,
                     DoubleKey.ApsBoostV6PreMealTargetMgdl,
-                    DoubleKey.ApsBoostV6PreMealLeadMin
+                    DoubleKey.ApsBoostV6PreMealLeadMin,
+                    // These size the base SMB that V6 caps its dose at outside a meal, and the engine has no
+                    // screen of its own now that V6 is the only Boost plugin, so an imported value stays visible here.
+                    PreferenceSubScreenDef(
+                        key = "boost_v1_smb_sizing",
+                        title = ApsStrings.boost_v1_smb_sizing_title,
+                        items = listOf<PreferenceItem>(
+                            DoubleKey.ApsBoostInsulinReqPct,
+                            DoubleKey.ApsBoostScale
+                            // Percent scale is not offered: on at 200 % by default, and a value stored by 3.4 still applies.
+                        )
+                    )
                     // Shared engine settings nested under Advanced. includeEngineEssentials = false: the
                     // essentials above are NOT repeated inside the engine sub-screens (no duplicate keys).
                 ) + openAPSBoostEngine.value.boostEngineCategories(includeEngineEssentials = false)
@@ -1424,3 +1456,4 @@ internal fun aggressiveEarlyConfirmAllowed(switchOn: Boolean, tbrBelow63Pct: Dou
 
 private const val NEED_WATCH_INTERVAL_MS = 24L * 60 * 60 * 1000
 private val NDW_TOKEN = Regex("ndw=[A-Z_]+(/[a-z]=[^,/]+)*")
+private val SMBMIN_TOKEN = Regex("smbmin=[^,]*")

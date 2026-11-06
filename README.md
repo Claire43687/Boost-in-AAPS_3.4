@@ -4,8 +4,47 @@ Boost is an independently maintained variant of [AAPS](https://github.com/nights
 4.0.0 that adds the Boost APS plugin. It is not a release of, or supported by, the AAPS project.
 You build it yourself and you are responsible for how you use it. AGPL-3.0, as AAPS.
 
-This line is Boost 6.2.0: the V6 meal logic and the Boost high temp, with each SMB sized by the
-oref tiers.
+This line is Boost 6.3.0: the V6 meal logic and the Boost high temp, with each SMB sized by the
+Boost tiers as in Boost 6.2.0 for AAPS 3.4.2.6.
+
+## Dosing changes from Boost 6.2.0
+
+- There is one Boost plugin, and it runs V6. If you ran plain Boost on 3.4, you move to V6 dosing
+  when you install this, and your sensitivity settings are converted once on the first loop cycle.
+- Percent scale is on at 200 % and no longer has a setting. Where 3.4 had stored it as off, it
+  stays off.
+- The two "Max minutes of basal to limit SMB" settings are held at no more than 15 (standard) and
+  20 (UAM). Boost lowers a higher value and tells you; it never raises one. These settings limit
+  only the SMB that oref sizes: Tier 8, and every SMB while Boost is off, such as at night. V6's
+  meal doses and Boost's other tiers are not limited by them.
+- In a meal state, V6 used to give its dose on a cycle where V1 had suspended for a low. It no
+  longer does. V6's rapid-rise check now takes the largest of the latest change, the short average
+  and the long average, as V1 does, where it used to take the latest change only.
+- The lowering of the low-glucose threshold on an accelerating rise needs glucose to be rising, and
+  never goes below your low-glucose setting.
+- Hypo Caution above 1.0 lowers the smallest dose V6 keeps when the hypo risk is high.
+- Sleep detection:
+  - A sleep that begins in the 90 minutes before your night window is held, unless steps, or heart
+    rate with steps, show you are up again.
+  - In the 90 minutes before your night ends, walking ends sleep: steps over the last hour reaching
+    your sleep-in steps setting, with at least 100 of them in the last 15 minutes.
+  - Watch steps are assessed more conservatively, each step being counted once.
+  - Health Connect step top-ups no longer count as a reason to wake.
+- The insulin-need watch compares the last 5 days with your usual, at 1.5 standard deviations.
+- During a meal, V6 used to move to its cautious state (RECOVERING, 0.4× of the dose) as soon as a
+  rise slowed, while glucose was still climbing. It now stays in the meal state until the rise is
+  below 3 mg/dL (0.17 mmol/L) per 5 minutes, and returns to it when glucose rises faster than
+  8 mg/dL (0.44 mmol/L) per 5 minutes.
+- The early primer starts on a sustained rise, a short average of at least 3 mg/dL (0.17 mmol/L) per
+  5 minutes, where it used to need acceleration. It no longer fires on a second rise once a meal has
+  been committed.
+- RECOVERING is capped at the committed cap, so it never gives more in one cycle than the meal state
+  does.
+
+## Other changes
+
+- The APS screen has a Heart rate section and an Auto config section, which shows Boost's automatic
+  settings in words.
 
 ## Installing over your current build
 

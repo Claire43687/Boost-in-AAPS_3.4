@@ -1,0 +1,32 @@
+{
+ "model": "hypo_four_column_sustained",
+ "label": "sustained_hypo (<70 for >=15min) within 90min",
+ "features": [
+  "cgm",
+  "delta",
+  "short_avg_delta",
+  "long_avg_delta"
+ ],
+ "feature_source": "GlucoseStatus; delta lag1, short lags1-3, long lags4-8 on a 5-min grid",
+ "trained_on": "Loop observational study (studies.cgm), deliberately excludes this fork",
+ "n_train_cycles": 26333400,
+ "n_train_subjects": 400,
+ "holdout_auc_this_cohort": 0.8176,
+ "holdout_auc_glucose_alone": 0.7485,
+ "holdout_participants_better": "36/36",
+ "hyperparams": {
+  "objective": "binary",
+  "n_estimators": 120,
+  "num_leaves": 24,
+  "learning_rate": 0.06,
+  "min_child_samples": 400,
+  "subsample": 0.8,
+  "subsample_freq": 1,
+  "colsample_bytree": 1.0,
+  "reg_lambda": 1.0,
+  "verbose": -1
+ },
+ "training_date": "2026-09-04",
+ "shadow_only": true,
+ "notes": "READ-ONLY shadow. Doses nothing. Emitted in the reason string as hypo4=sustained,near; never as an RT field (ART verifier register limit)."
+}

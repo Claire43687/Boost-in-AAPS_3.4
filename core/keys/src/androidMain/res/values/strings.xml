@@ -464,7 +464,7 @@
     <string name="pref_title_boost_hr_window_minutes">HR Averaging Window (minutes)</string>
     <string name="pref_title_boost_inactivity_pct">Inactivity Profile Percent</string>
     <string name="pref_title_boost_inactivity_steps">Inactivity Step Count</string>
-    <string name="pref_title_boost_insulin_req_pct" formatted="false">SMB insulin required %</string>
+    <string name="pref_title_boost_insulin_req_pct" formatted="false">Boost Insulin Required %</string>
     <string name="pref_title_boost_intraday_step_bank">Intraday step bank (internal)</string>
     <string name="pref_title_boost_last_engine_mode">Last engine mode (internal)</string>
     <string name="pref_title_boost_last_use_tdd">Last use-TDD setting (internal)</string>
@@ -538,8 +538,8 @@
     <string name="pref_summary_boost_dyn_isf_adjustment_factor">Scale the calculated TDD by this percentage. Default: 100</string>
     <string name="pref_summary_boost_inactivity_steps">Steps/hour below which user is inactive. Default: 500</string>
     <string name="pref_summary_boost_inactivity_pct">Profile percentage when inactive. Default: 130</string>
-    <string name="pref_summary_boost_sleep_in_hours">Hours after Boost start to allow sleep-in. Default: 2</string>
-    <string name="pref_summary_boost_sleep_in_steps">Steps/hour below which user is considered still sleeping. Default: 250</string>
+    <string name="pref_summary_boost_sleep_in_hours">How long night mode can stay on after the Night Mode End Time while you are still in bed. Night mode ends early once the step count in the last hour reaches Sleep-in Steps, so with an end of 06:30 and 2 hours here it can run until 08:30 if the phone or watch sees no walking. Set to 0 for night mode to end at the end time (Auto-detect sleep, if on, can still extend it while you are detected as asleep). Default: 2</string>
+    <string name="pref_summary_boost_sleep_in_steps">Steps in the last hour below which you are treated as still in bed after the Night Mode End Time, keeping night mode on for up to Sleep-in Hours. Default: 250</string>
     <string name="pref_summary_boost_activity_steps5">Steps in 5 min above which user is active. Default: 420</string>
     <string name="pref_summary_boost_activity_steps15">Steps in 15 min above which user is active. Default: 800</string>
     <string name="pref_summary_boost_activity_steps30">Steps in 30 min above which user is active. Default: 1200</string>
@@ -557,7 +557,7 @@
     <string name="pref_summary_boost_post_exercise_min_duration">Recovery only triggers if exercise was detected for at least this many minutes. Avoids false triggers from brief activity bursts. Default: 10 min.</string>
     <string name="pref_summary_boost_night_mode_enabled">Disable SMBs during night hours when BG is near target</string>
     <string name="pref_summary_boost_night_mode_start">Start of Night Mode window (24h format HH:mm). Default: 22:00</string>
-    <string name="pref_summary_boost_night_mode_end">End of Night Mode window (24h format HH:mm). Default: 07:00</string>
+    <string name="pref_summary_boost_night_mode_end">End of Night Mode window (24h format HH:mm), in the phone\'s time zone. Night mode can continue after this for up to Sleep-in Hours while the step count stays low. Default: 07:00</string>
     <string name="pref_summary_boost_night_mode_bg_offset">SMBs are disabled when BG is below the profile target plus this offset. Default: 1.5 mmol/L (27 mg/dL)</string>
     <string name="pref_summary_boost_night_mode_disable_with_cob">Allow SMBs during Night Mode if carbs are on board</string>
     <string name="pref_summary_boost_night_mode_disable_with_low_tt">Allow SMBs during Night Mode when temp target is below profile target</string>
@@ -579,12 +579,16 @@
     <string name="pref_summary_boost_v5_aggressive_early_confirm">Confirms a meal one cycle sooner still when its signal is confirm-strength on two consecutive cycles — the same shot, delivered a touch earlier. Because it occasionally commits to a rise that would have faded, it adds a little insulin, so it is set automatically only for users whose recent low-glucose exposure is well within target. Default OFF; auto-config turns it on where it is safe. Leave off (or turn off) to keep the standard confirm timing.</string>
     <string name="pref_summary_boost_v5_composed_floor_active" formatted="false">Enforces a 25% floor on the composed soft-brake multiplier during active meal sessions above 160 mg/dL with eventualBG above target — fixes the soft-brake stack compounding to sub-pump-step zero doses mid-meal (July 2026). All hard gates and dose caps still apply. Default OFF. ENFORCED hypo-gate: the floor engages ONLY while BOTH your trailing 14-day time below 63 mg/dL (3.5 mmol/L) is under 2.0% AND your time below 70 mg/dL is under 3.5% — it is insulin-adding, so it stays suppressed (even when this is ON) if either low-exposure figure is higher, and auto-re-engages when both drop back under their limits.</string>
     <string name="pref_summary_boost_v5_velocity_budget_active" formatted="false">When you are above 180 mg/dL but oref calculates no extra insulin is needed (it predicts you will come down on the insulin already on board), this delivers a small hold — up to 0.5 U, capped at your committed-cap and your IOB headroom — to bring highs down a little faster. It deliberately doses a touch more than the base algorithm on that high tail, so it is for users who prefer a firmer response to sustained highs. Excludes decelerating highs, sleep, and the post-rescue window; all hard hypo gates still apply. Default OFF. Uses the SAME ENFORCED hypo-gate as the brake floor: engages ONLY while your trailing 14-day time below 63 mg/dL is under 2.0% AND time below 70 mg/dL is under 3.5%, and auto-suspends if either rises.</string>
-    <string name="pref_summary_boost_v5_primer_cap_u">Fizzle-safe early primer delivered on an accelerating rise during OBSERVING — gives an earlier meal response. Additive up to this base; any velocity-scaled excess is netted off the CONFIRMED commit-shot (move, not add). 0 = OFF. Auto-config derives a per-user value.</string>
+    <string name="pref_summary_boost_v5_primer_cap_u">Fizzle-safe early primer delivered on a sustained rise during OBSERVING — gives an earlier meal response. Additive up to this base; any velocity-scaled excess is netted off the CONFIRMED commit-shot (move, not add). 0 = OFF. Auto-config derives a per-user value.</string>
     <string name="pref_summary_boost_v5_primer_bolus_mode">Override: deliver the acceleration primer as a bolus even if auto-config routed you to the retractable temp-basal fallback (for hypo-prone users). Floors and the commit-shot net-off are unaffected. Default OFF (respect auto-config routing).</string>
     <string name="pref_summary_boost_v5_confirm_tranche">Experimental, off by default. Splits the confirm commitment, giving part at the confirming cycle and holding the rest for ten minutes, released only if the rise continues. Can only deliver less insulin than without it, never more. A held remainder that cannot be delivered, because the rolling cumulative cap is spent or the sleep gate is shut, counts as a decision not to release.</string>
     <string name="pref_summary_boost_v5_tranche_fraction">Share of the sized confirm dose delivered at the confirming cycle. The remainder is held. Set to 1.0 to make the tranche inert without switching it off.</string>
     <string name="pref_summary_boost_v5_tranche_threshold">The remainder is released when the rule\'s probability exceeds this. Higher withholds more. Auto-config sets it from your own confirm episodes over the last 45 days once there are at least 15 that clearly went big or stayed small, with at least 5 of each. It raises it whenever your episodes support that and does not currently lower it. A value you set here yourself is kept; set it back to 0.48 to hand it back to auto-config.</string>
-    <string name="pref_summary_boost_v6_pre_meal_target">Experimental: learns your habitual meal times (from Boost meal commits) and applies a low target shortly before a learned meal so insulin is working when carbs land. Exercise and post-exercise recovery override it. When OFF it only logs (\"V6 pre-meal WOULD apply\" without changing dosing) so you can verify the learned times first.</string>
+    <string name="pref_summary_boost_v6_pre_meal_target">Experimental: learns your habitual meal times (from Boost meal commits) and applies a low target shortly before a learned meal so insulin is working when carbs land. Exercise and post-exercise recovery override it.</string>
     <string name="pref_summary_boost_v6_pre_meal_target_mgdl">The low target applied during the pre-meal window. Lower = more pre-emptive insulin. Default: 72 mg/dL (4.0 mmol).</string>
     <string name="pref_summary_boost_v6_pre_meal_lead_min">How many minutes before a learned meal the low target window OPENS. It closes 45 min before the meal. Default: 60 min.</string>
+    <string name="pref_title_boost_enable_percent_scale">Enable Boost Percentage Scaling</string>
+    <string name="pref_title_boost_percent_scale_factor">Percent Scale Factor</string>
+    <string name="pref_summary_boost_percent_scale">Maximum scale factor for percent-based Boost sizing between 108-180 mg/dL. Default: 200</string>
+    <string name="pref_summary_boost_enable_percent_scale">Scales SMB when glucose 108-180 mg/dL with increasing delta</string>
 </resources>

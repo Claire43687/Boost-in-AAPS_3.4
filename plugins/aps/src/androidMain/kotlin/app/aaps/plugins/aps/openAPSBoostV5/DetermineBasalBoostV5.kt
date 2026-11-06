@@ -230,13 +230,21 @@ data class V5Decision(
 )
 
 // ===== V1-acceleration early primer (LIVE) =====
-// Reclaims V1's ~15-min-earlier acceleration response as a small fizzle-safe primer during OBSERVING
+// Reclaims V1's ~15-min-earlier early-rise response as a small fizzle-safe primer during OBSERVING (opened on a sustained rise since 5 November 2026)
 // (pure fizzle-low +0.9%, not distinguishable from ambient). Delivered as an advance on the CONFIRMED
 // commit-shot: additive up to the fizzle-safe base (primerCapU); the velocity-scaled excess is netted
 // off the commit-shot (move-not-add). Fizzle branch = the small proven-safe amount; confirm branch =
 // timing shift, net-extra = the base. The follow-through that crashed V1 is guarded by V6's brake.
-/** Acceleration trigger — V1's G3-release threshold (delta_accl %, measured 98% recall / 15-min lead vs confirm). */
-internal const val PRIMER_ACCEL_THRESHOLD = 10.0
+/**
+ * Rise trigger: the primer opens when shortAvgDelta is at least this, mg/dL per 5 min, as well as
+ * delta >= [PRIMER_DELTA_MIN]. It replaced the V1 acceleration trigger (delta_accl > 10). A steady
+ * meal rise has low acceleration, so that trigger missed it, and the rework below already found
+ * acceleration a weak detector. Chosen from a cohort replay of 2, 3 and 4 over 30 days: fires rose by
+ * about a tenth, the share followed by a confirm within 45 min stayed at 44% (45% before), and 14%
+ * (95% CI 9 to 19) of the added insulin came before a sensor value below 70 mg/dL within 3 h,
+ * against the 27% benchmark.
+ */
+internal const val PRIMER_RISE_SHORT_AVG_MIN = 3.0
 /** Primer suppressed unless the 60-min low is at/above this (post-hypo rescue-carb guard; mirrors the fast path). */
 internal const val PRIMER_MIN_RECENT_LOW_MGDL = 80.0
 
@@ -248,7 +256,7 @@ internal const val PRIMER_MIN_RECENT_LOW_MGDL = 80.0
 // deltaAccl 33.5 while a genuine 11 mg/dL/5min rise scored 12.5, so noise was paid ~2× and real
 // meals ~1.1×. The old scale was also SATURATED at its 2× ceiling on 5 of 6 observed live fires,
 // i.e. a constant dressed as a response curve.
-// FIX. delta carries the magnitude; deltaAccl stays only as a cheap shape confirmer; and primerCapU
+// FIX. delta carries the magnitude; deltaAccl stayed as a shape confirmer (replaced by PRIMER_RISE_SHORT_AVG_MIN, 5 November 2026); and primerCapU
 // becomes a TRUE CEILING scaled by three state factors in [0,1] instead of a >=1 multiplier.
 
 /** Absolute-rise floor (mg/dL per 5 min). delta>=3 STRICTLY DOMINATES the old ratio gate: same firing
@@ -445,7 +453,7 @@ class DetermineBasalBoostV5 @Inject constructor() {
         //      signal). Sharp meals (≥50 mg/dL over 30 min) keep the full dose; slow meals
         //      (≤25 mg/dL) get 40% of it; linear interpolation between.
         //   2. State-specific hard cap — regardless of computed dose, CONFIRMED commits cap at
-        //      MAX_CONFIRMED_COMMIT_DOSE_U; COMMITTED holding doses cap at MAX_COMMITTED_DOSE_U.
+        //      MAX_CONFIRMED_COMMIT_DOSE_U; COMMITTED and RECOVERING doses cap at MAX_COMMITTED_DOSE_U.
         //      These caps are calibrated so V5 cannot deliver more than V4.4.2 would on the same
         //      cycle, regardless of any upstream bug.
         // velocityFactor hoisted above the state step (used by the confirm dose gate).
@@ -561,7 +569,8 @@ class DetermineBasalBoostV5 @Inject constructor() {
         // ===== Primer sizing and application (moved after Phase 3 ) =====
         // Sized here rather than before Phase 2 so that it can see the Phase-3 hard gates, which it
         // must respect exactly as both floors do (audit item 10). See primerSizing for the rules.
-        val primer = primerSizing(inputs, primerActiveState, primerAppliedU, budget.mlHypoRiskScale, phase3.reductions.hardGateFired)
+        val primer = primerSizing(inputs, primerActiveState, primerAppliedU, budget.mlHypoRiskScale, phase3.reductions.hardGateFired,
+            sessionLocked = newHypothesisState.committedInSession)
         val primerBolusU = primer.bolusU
         if (primerBolusU > 0.0) {
             primerAppliedU = primerBolusU
@@ -658,8 +667,10 @@ internal data class PrimerSizing(val bolusU: Double, val debug: String)
 
 /**
  * The V1-acceleration early primer (sizing reworked 2026-07-30). Once per OBSERVING
- * session, on an accelerating rise, with every floor clear (recent low >= 80, awake, not exercising,
- * not post-rescue, not an announced meal) and maxIOB headroom.
+ * session, on a sustained rise ([PRIMER_RISE_SHORT_AVG_MIN]), with every floor clear (recent low >= 80, awake, not exercising,
+ * not post-rescue, not an announced meal), maxIOB headroom, and not inside a meal session that has
+ * already committed ([sessionLocked]). The once-only guard resets on IDLE, but the session lock is
+ * carried through a trough, so without this the second rise of one meal could be primed again.
  *
  * (dose-path audit item 10), two further conditions:
  *  - no primer when a Phase-3 hard gate fired ([hardGateFired] non-null: SMB pre-checks, minGuardBG
@@ -678,15 +689,16 @@ internal fun primerSizing(
     alreadyPrimedU: Double,
     mlScale: Double,
     hardGateFired: String?,
+    sessionLocked: Boolean = false,
 ): PrimerSizing {
     val open = inputs.primerCapU > 0.0 && state == MealHypothesis.OBSERVING && alreadyPrimedU <= 0.0 &&
-        inputs.delta >= PRIMER_DELTA_MIN && inputs.deltaAccl > PRIMER_ACCEL_THRESHOLD &&
+        inputs.delta >= PRIMER_DELTA_MIN && inputs.shortAvgDelta >= PRIMER_RISE_SHORT_AVG_MIN &&
         inputs.recentLowBg >= PRIMER_MIN_RECENT_LOW_MGDL && !inputs.asleep &&
         !inputs.exerciseActive && !inputs.postRescueWindow &&
         // no primer on an announced meal. It reclaims early insulin for a meal nobody
         // dosed for, and after a pre-bolus that insulin has already been given.
         !inputs.mealAnnounced &&
-        hardGateFired == null
+        hardGateFired == null && !sessionLocked
     if (!open) return PrimerSizing(0.0, "")
     // State-aware sizing. primerCapU is a TRUE CEILING; the factors in [0,1] scale it down.
     // fRise DISCRIMINATES (magnitude of the actual rise); fBg and fIob are SUPPRESSORS — they
@@ -785,10 +797,12 @@ internal fun velocityScaledDoseFactor(cumulativeRise30min: Double): Double {
  * - **COMMITTED**: capped at [MAX_COMMITTED_DOSE_U] (0.25 U default; runtime cap is the
  *   auto-configured `Inputs.committedCapU`). Multiple of these can fire per meal (one per cycle
  *   while COMMITTED), so the per-cycle cap must be smaller.
- * - **IDLE / OBSERVING / RECOVERING**: NO cap here — IDLE is 1.0× and RECOVERING 0.4× of budget
- *   (they DO dose). Since these states are instead capped at V1's would-dose at the
- *   override site (OpenAPSBoostPlugin, "non-meal-state cap") — V6 may only out-dose V1 when it
- *   holds a meal hypothesis.
+ * - **RECOVERING**: also capped at the committed cap. Its 0.4× of budget and the override seam's
+ *   V1 would-dose are not tied to any cap, so without this the cautious state could pass more per
+ *   cycle than COMMITTED when the budget and V1's request were both large.
+ * - **IDLE / OBSERVING**: NO cap here (IDLE is 1.0× of budget). These states are capped at V1's
+ *   would-dose at the override site (OpenAPSBoostPlugin, "non-meal-state cap"): V6 may only
+ *   out-dose V1 when it holds a meal hypothesis.
  */
 internal fun applyStateDoseCap(
     state: MealHypothesis,
@@ -797,7 +811,7 @@ internal fun applyStateDoseCap(
     committedCapU: Double = MAX_COMMITTED_DOSE_U,
 ): Double = when (state) {
     MealHypothesis.CONFIRMED -> dose.coerceAtMost(confirmedCapU)
-    MealHypothesis.COMMITTED -> dose.coerceAtMost(committedCapU)
+    MealHypothesis.COMMITTED, MealHypothesis.RECOVERING -> dose.coerceAtMost(committedCapU)
     else -> dose
 }
 

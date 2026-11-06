@@ -9,7 +9,7 @@ import org.junit.jupiter.api.Test
  * commit-shot: additive up to the fizzle-safe base (primerCapU); the acceleration-scaled excess is
  * netted off the commit-shot (move-not-add).
  *
- * decide()-level tests pin: the primer fires only in OBSERVING on an accelerating rise with every
+ * decide()-level tests pin: the primer fires only in OBSERVING on a sustained rise with every
  * floor clear; bolus mode folds it into finalDose while temp-basal mode does not; scaled excess sets
  * the netting residual; once-per-session; and the residual is netted off the confirmed/committed dose.
  */
@@ -17,11 +17,11 @@ class PrimerTest {
 
     private val determineBasal = DetermineBasalBoostV5()
 
-    /** OBSERVING (age 0, no confirm this cycle), accelerating rise, floors clear, maxIOB headroom. */
+    /** OBSERVING (age 0, no confirm this cycle), sustained rise, floors clear, maxIOB headroom. */
     private fun observingAccelInputs() = V5Inputs(
         delta = 6.0,
         shortAvgDelta = 5.0,
-        deltaAccl = 15.0,               // > PRIMER_ACCEL_THRESHOLD (10) — shape confirmer only, no longer scales
+        deltaAccl = 15.0,               // no longer part of the gate (PRIMER_RISE_SHORT_AVG_MIN replaced it)
         bg = 140.0,
         eventualBg = 150.0,
         targetBg = 100.0,
@@ -114,8 +114,36 @@ class PrimerTest {
         assertThat(determineBasal.decide(observingAccelInputs().copy(postRescueWindow = true), observing()).primerBolusU).isEqualTo(0.0)
     }
 
-    @Test fun `no primer without acceleration (deltaAccl at or below threshold)`() {
-        assertThat(determineBasal.decide(observingAccelInputs().copy(deltaAccl = 10.0), observing()).primerBolusU).isEqualTo(0.0)
+    // ── the gate opens on a sustained rise (PRIMER_RISE_SHORT_AVG_MIN), not on acceleration ──
+    private fun primerAt(shortAvgDelta: Double, deltaAccl: Double, delta: Double = 6.0) = determineBasal.decide(
+        observingAccelInputs().copy(delta = delta, shortAvgDelta = shortAvgDelta, deltaAccl = deltaAccl), observing(),
+    ).primerBolusU
+
+    @Test fun `a steady rise with low acceleration opens the primer`() {
+        // A steady rise: delta and shortAvgDelta close together, so delta_accl stays under the old 10.
+        assertThat(primerAt(shortAvgDelta = 5.5, deltaAccl = 9.1, delta = 6.0)).isGreaterThan(0.0)
+        // A slowing rise (delta 4 under shortAvgDelta 5, delta_accl -20) still opens it; fRise sizes it down.
+        assertThat(primerAt(shortAvgDelta = 5.0, deltaAccl = -20.0, delta = 4.0)).isGreaterThan(0.0)
+    }
+
+    @Test fun `no primer on the second rise of a meal session that already committed`() {
+        // The once-only guard resets on IDLE; the session lock is carried through the trough.
+        val locked = V5PersistedState(mealHypothesis = MealHypothesisState(MealHypothesis.OBSERVING, ageCycles = 0, committedInSession = true))
+        assertThat(determineBasal.decide(observingAccelInputs(), locked).primerBolusU).isEqualTo(0.0)
+        assertThat(determineBasal.decide(observingAccelInputs(), observing()).primerBolusU).isGreaterThan(0.0)
+    }
+
+    @Test fun `primer rise boundary at PRIMER_RISE_SHORT_AVG_MIN`() {
+        assertThat(primerAt(shortAvgDelta = PRIMER_RISE_SHORT_AVG_MIN, deltaAccl = 0.0)).isGreaterThan(0.0)
+        assertThat(primerAt(shortAvgDelta = PRIMER_RISE_SHORT_AVG_MIN - 0.01, deltaAccl = 0.0)).isEqualTo(0.0)
+    }
+
+    @Test fun `a sharp onset from a flat trace no longer opens the primer on acceleration alone`() {
+        assertThat(primerAt(shortAvgDelta = 2.0, deltaAccl = 200.0)).isEqualTo(0.0)
+    }
+
+    @Test fun `the delta floor still applies to a sustained rise`() {
+        assertThat(primerAt(shortAvgDelta = 5.0, deltaAccl = 0.0, delta = PRIMER_DELTA_MIN - 0.01)).isEqualTo(0.0)
     }
 
     @Test fun `temp-basal mode - primer computed but NOT folded into finalDose`() {

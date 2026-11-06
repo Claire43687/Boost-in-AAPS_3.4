@@ -245,4 +245,68 @@ class BoostRiskModel @Inject constructor(
         return featureNames
     }
     fun getTreeCount(): Int = trees?.size ?: 0
+
+    // ---------------------------------------------------------------------------------------
+    // Shadow model. A second set of trees, scored on the SAME feature vector as the
+    // live model and delivering nothing. It exists to answer, on real devices, whether the refit
+    // trained on 183 Commons participants behaves as the offline comparison says it does.
+    //
+    // It is a second slot inside this class rather than a second injected instance deliberately.
+    // Adding a qualifier and a provider would mean editing the Dagger graph for a component that
+    // logs, and this engine has already lost five days of dosing to an annotation that drifted off
+    // its class. A field costs nothing and cannot unbind anything.
+    //
+    // 🚨 THE TWO SCORES ARE NOT ON THE SAME SCALE AND MUST NOT BE COMPARED TO A FIXED THRESHOLD.
+    // The refit was fitted on a 7.24% base rate and is far better calibrated to it, so on 1.7M
+    // held-out rows it exceeds 0.30 on 42.2% of cycles where the live model exceeds it on 6.6%,
+    // and 0.60 on 15.3% against 2.9%. Ranking is what improved: paired AUC +0.0143 [+0.0101,
+    // +0.0185] with both models out of sample. Feeding this score to the live gates unchanged
+    // would fire the damper six times as often. Any promotion has to re-place the thresholds on
+    // the new distribution first; the equivalent-firing points measured offline are 0.786 and
+    // 0.923.
+    // ---------------------------------------------------------------------------------------
+    private var shadowTrees: List<TreeNode>? = null
+    private var shadowFeatureNames: List<String>? = null
+    @Volatile private var shadowLoaded = false
+    @Volatile private var shadowLoadAttempted = false
+    private val shadowAssetPath = "boost/hypo_risk_model_v13_shadow.json"
+
+    private fun ensureShadowLoaded() {
+        if (shadowLoaded || shadowLoadAttempted) return
+        synchronized(loadLock) {
+            if (shadowLoaded || shadowLoadAttempted) return
+            shadowLoadAttempted = true
+            try {
+                val raw = context.assets.open(shadowAssetPath).bufferedReader().readText()
+                val json = JSONObject(raw)
+                val names = json.getJSONArray("feature_names")
+                shadowFeatureNames = (0 until names.length()).map { names.getString(it) }
+                val arr = json.getJSONArray("trees")
+                shadowTrees = buildList { for (i in 0 until arr.length()) add(parseNode(arr.getJSONObject(i))) }
+                shadowLoaded = true
+                aapsLogger.info(LTag.APS, "BoostRiskModel shadow loaded: ${shadowTrees?.size} trees, ${shadowFeatureNames?.size} features")
+            } catch (e: Exception) {
+                aapsLogger.info(LTag.APS, "BoostRiskModel shadow NOT loaded: ${e.javaClass.simpleName}: ${e.message}")
+                shadowLoaded = false
+            }
+        }
+    }
+
+    /**
+     * Score the shadow model on a feature vector already built for the live model.
+     *
+     * The caller passes the same array, so any difference between the two scores is the model and
+     * not the feature build. Returns null when the shadow asset is absent or its schema does not
+     * match, which is the intended behaviour on a build that ships no shadow: the live path is
+     * untouched and nothing is logged.
+     */
+    fun predictShadow(features: DoubleArray): Double? {
+        ensureShadowLoaded()
+        val t = shadowTrees ?: return null
+        if (!shadowLoaded) return null
+        if (features.size != (shadowFeatureNames?.size ?: features.size)) return null
+        return score(t, features)
+    }
+
+    fun isShadowLoaded(): Boolean { ensureShadowLoaded(); return shadowLoaded }
 }
