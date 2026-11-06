@@ -16,7 +16,7 @@ on:
           - 4.0.0-boost-6.2.0
 
 env:
-  BOOST_REPO: tim2000s/Boost-in-AAPS_4.0
+  BOOST_REPO: tim2000s/Boost
   BUILD_VARIANT: fullRelease
 
 permissions:

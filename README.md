@@ -72,6 +72,19 @@ install AAPS and import the export.
 
 Your fork's `KEYSTORE_SET` and `GDRIVE_OAUTH2` secrets are used as they are.
 
+### You have a fork of Boost-in-AAPS_3.4
+
+This repository was Boost-in-AAPS_3.4, and its Boost 6.2.0 for AAPS 3.4.2.6 is now on the branch
+`master-3.4.2.6`. A fork of it already holds the secrets Boost CI needs, including the separate
+keystore secrets.
+
+- To stay on 3.4, do not sync your fork. Its `master` is still the 3.4.2.6 line and Branch CI
+  builds it as before.
+- To move to 4.0, sync your fork. GitHub says your `master` has diverged and offers to discard your
+  commits; accepting replaces it with this `master`, which brings Boost CI. Then run Boost CI and
+  install as above. After the sync, Branch CI is gone from your fork and 3.4 can no longer be built
+  from it, so keep your current APK and a settings export.
+
 ### You are new to browser builds
 
 Fork this repository, enable Actions, and create the two secrets with the
