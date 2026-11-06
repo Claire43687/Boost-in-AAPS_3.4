@@ -178,13 +178,16 @@ jobs:
           fi
 
       - name: Build APKs
+        # Kotlin compiles in-process, inside the Gradle heap. Eight workers on the 4-core runner ran out of
+        # heap with "GC overhead limit exceeded" (run 42283039742, first attempt); one per core halves the
+        # number of compilations held at once.
         run: |
               ./gradlew :app:assemble${{ env.BUILD_VARIANT }} :wear:assemble${{ env.BUILD_VARIANT }} \
               -Dorg.gradle.jvmargs="-Xmx8g -XX:+UseParallelGC -Xss4m" \
               -Dkotlin.daemon.jvm.options="-Xmx2g" \
               -Dkotlin.compiler.execution.strategy="in-process" \
               -Dorg.gradle.daemon=true \
-              -Dorg.gradle.workers.max=8 \
+              -Dorg.gradle.workers.max=4 \
               -Dorg.gradle.caching=true \
               -Pandroid.injected.signing.store.file="$RUNNER_TEMP/keystore/keystore.jks" \
               -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
